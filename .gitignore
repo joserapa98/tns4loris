@@ -172,3 +172,7 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+attacks/models/*
+attacks/datasets/*
+attacks/attack_models/*
