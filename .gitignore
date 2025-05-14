@@ -174,5 +174,6 @@ cython_debug/
 .pypirc
 
 attacks/models/*
+attacks/tt_models/*
 attacks/datasets/*
 attacks/attack_models/*
