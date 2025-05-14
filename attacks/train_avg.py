@@ -1,5 +1,3 @@
-#to run navigate to code then paste: python train_juliette.py 3 20 100 standard 1 0.1
-
 import sys
 import os
 import getopt
