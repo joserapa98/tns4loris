@@ -18,8 +18,30 @@ import pandas as pd
 import numpy as np
 import torch
 
-cwd = os.getcwd()
+if torch.cuda.is_available():
+    print("GPU is available")
+    device = torch.device("cuda")
+else:
+    print("GPU is not available")
+    device = torch.device("cpu")
 
+def move_to_cpu(obj):
+    if torch.is_tensor(obj):
+        return obj.cpu()
+    elif isinstance(obj, dict):
+        return {k: move_to_cpu(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [move_to_cpu(v) for v in obj]
+    elif isinstance(obj, tuple):
+        return tuple(move_to_cpu(v) for v in obj)
+    else:
+        return obj
+
+cwd = os.getcwd()
+#Specify input path here
+input_dir=os.path.join(cwd, 'Tensor_Project/02.Input')
+#Specify output directory
+output_dir=os.path.join(cwd, 'Tensor_Results')
 
 def all_combinations(lst):
     return list(chain.from_iterable(combinations(lst, r)
@@ -68,8 +90,7 @@ def create_model(model_name, l1, C):
     # return model
 
 def load_data(featuresNA, phenoNA, datasets, datasets_ids, scaler_type):
-    data_dir = os.path.join(cwd, '..', '02.Input')
-    data_file = os.path.join(data_dir, 'AllData.xlsx')
+    data_file = os.path.join(input_dir, 'AllData.xlsx')
 
     # Data truncation
     TMB_upper = 50
@@ -150,7 +171,7 @@ if __name__ == '__main__':
     y_z = np.array([f'{a}_{b}' for a, b in zip(y, z)])
     
     # Train
-    models_dir = os.path.join(cwd, 'models', model_name, scaler_type, 'vanilla')
+    models_dir = os.path.join(output_dir, 'models', model_name, scaler_type, 'vanilla')
     os.makedirs(models_dir, exist_ok=True)
     
     all_combs = all_combinations(datasets_ids)
@@ -189,15 +210,15 @@ if __name__ == '__main__':
             
             # Save model's parameters
             if model_name == 'nn2':
-                coefs = [torch.from_numpy(c).flatten()
+                coefs = [torch.from_numpy(c).flatten().to(device)
                             for c in model.coefs_]
-                coefs = torch.cat(coefs)
-                intercepts = [torch.from_numpy(c).flatten()
+                coefs = torch.cat(coefs).to(device)
+                intercepts = [torch.from_numpy(c).flatten.to(device)
                                 for c in model.intercepts_]
-                intercepts = torch.cat(intercepts)
+                intercepts = torch.cat(intercepts).to(device)
             else: #if model_name == 'llr6':
-                coefs = torch.from_numpy(model.coef_).flatten()
-                intercepts = torch.from_numpy(model.intercept_).flatten()
+                coefs = torch.from_numpy(model.coef_).flatten().to(device)
+                intercepts = torch.from_numpy(model.intercept_).flatten().to(device)
             
             params = torch.cat([coefs, intercepts])
             
@@ -231,16 +252,18 @@ if __name__ == '__main__':
             new_coefs = coefs / scale  # element-wise division
 
             # Adjust intercept
-            intercept_shift = torch.sum(coefs * mean / scale)
+            intercept_shift = torch.sum(coefs * mean / scale).to(device)
             new_intercept = intercept - intercept_shift
 
             # Concatenate back
-            new_coefs_tensor = torch.cat([new_coefs, new_intercept.unsqueeze(0)])
+            new_coefs_tensor = torch.cat([new_coefs, new_intercept.unsqueeze(0)]).to(device)
             params = new_coefs_tensor
             
             # Save model's parameters
+            #move to cpu before dumping
+            params_cpu = move_to_cpu(avg_params)
             params_dir = os.path.join(comb_dir, f'{C}_{l1}_{i}_params.pkl')
-            joblib.dump(params, params_dir)
+            joblib.dump(params_cpu, params_dir)
 
             # Evaluate final model by dataset
             if model_name == 'llr6':
@@ -297,5 +320,7 @@ if __name__ == '__main__':
                 json.dump(auc_scores, file, indent=4)
             
             # Save results
+            #move to cpu before dumping
+            results_cpu = move_to_cpu(results)
             results_dir = os.path.join(comb_dir, f'{C}_{l1}_{i}_results.pkl')
-            joblib.dump(results, results_dir)
+            joblib.dump(results_cpu, results_dir)
