@@ -130,21 +130,39 @@ def tensorize(model, x_train, y_train, x_test, y_test,
     def embedding(data):
         return tk.embeddings.poly(data, degree=phys_dim - 1).float()
     
-    cores = tt_rss(function=fn_model,
-                   embedding=embedding,
-                   sketch_samples=x_train[:sketch_size],
-                   labels=y_train[:sketch_size],
-                   domain_multiplier=1,
-                   domain=domain,
-                   rank=bond_dim,
-                   cum_percentage=cum_percentage,
-                   batch_size=batch_size,
-                   device=device,
-                   verbose=verbose)
+    cores, info_dict = tt_rss(function=fn_model,
+                              embedding=embedding,
+                              sketch_samples=x_train[:sketch_size],
+                              labels=y_train[:sketch_size],
+                              domain_multiplier=1,
+                              domain=domain,
+                              rank=bond_dim,
+                              cum_percentage=cum_percentage,
+                              batch_size=batch_size,
+                              device=device,
+                              verbose=verbose,
+                              return_info=True)
+    
+    print('Info:', info_dict)
     
     mps = tk.models.MPSLayer(tensors=cores)
     mps.trace(torch.zeros(1, x_train.size(1), phys_dim))
     
+    # Error
+    y_train_mps = mps(embedding(x_train))
+    y_test_mps = mps(embedding(x_test))
+    
+    y_train_lr = fn_model(x_train)
+    y_test_lr = fn_model(x_test)
+    
+    train_error = (y_train_mps - y_train_lr).norm().pow(2) / y_train_mps.size(0)
+    test_error = (y_test_mps - y_test_lr).norm().pow(2) / y_test_mps.size(0)
+    
+    print(f'MSE: Train: {train_error:.2}, Test: {test_error:.2e}',)
+    # print(y_train_mps[:10])
+    # print(y_train_lr[:10])
+    
+    # Accuracy
     y_train_mps = mps(embedding(x_train))
     _, y_train_mps = y_train_mps.max(dim=1)
     
@@ -531,7 +549,7 @@ if __name__ == '__main__':
     print()
 
 
-    # Exampl 3
+    # Example 3
     cond_features = ['Systemic_therapy_history']
     cond_data = [0.]
 
@@ -556,56 +574,14 @@ if __name__ == '__main__':
     print(distr)
     print(distr.sum())
     print()
+    
+    # Example 4
+    cond_features = []
+    cond_data = []
 
- #-------------------------------------------------------------
-    #****Create scalers for each variable******
-    data_file = os.path.join(input_dir, 'AllData.xlsx')
-    # Data truncation
-    TMB_upper = 50
-    Age_upper = 85
-    NLR_upper = 25
-    featuresNA = ['TMB', 'Albumin', 'NLR', 'Age', 'Systemic_therapy_history',
-                    'CancerType1', 'CancerType2', 'CancerType3', 'CancerType4',
-                    'CancerType5', 'CancerType6', 'CancerType7', 'CancerType8',
-                    'CancerType9', 'CancerType10', 'CancerType11', 'CancerType12',
-                    'CancerType13', 'CancerType14', 'CancerType15', 'CancerType16']
-    nonbinary=['TMB', 'Albumin', 'NLR', 'Age']
-    phenoNA = 'Response'
-    data = pd.read_excel(data_file, sheet_name='Chowell_train', index_col=0)
+    marg_features = ['Response', 'Albumin']
 
-    # Data truncation
-    data['TMB'] = [c if c < TMB_upper else TMB_upper for c in data['TMB']]
-    data['Age'] = [c if c < Age_upper else Age_upper for c in data['Age']]
-    data['NLR'] = [c if c < NLR_upper else NLR_upper for c in data['NLR']]
-
-    all_features = featuresNA + [phenoNA]
-    data_no_nans = data[all_features].dropna(axis=0)
-
-    fit_scalers = {}
-    for feature in nonbinary:
-        scaler = StandardScaler()
-        scaler.fit(data_no_nans[[feature]])
-        fit_scalers[feature] = scaler
-
-    def scale_input(patient):
-        for feature in patient.columns:
-            if feature in fit_scalers:
-                patient[feature] = fit_scalers[feature].transform(patient[[feature]])
-            return patient
-#  #-------------------------------------------------------------
-
-# TMB Example
-  #We know that patients with TMB above 27/50 should respond
-    cond_features = ['TMB']
-    cond_data_unscaled = [27] #10,27,30
-
-    cond_data_unscaled_df= pd.DataFrame([cond_data_unscaled], columns=cond_features)
-    cond_data_df= scale_input(cond_data_unscaled_df)
-    cond_data=cond_data_df.iloc[0].tolist()
-
-    marg_features = ['Response']
-
-    discr_steps = int(1e5)
+    discr_steps = int(1e1)  # int(1e5)
 
     distr, marg_feat_order = get_distribution(
         mps=tn_model,
@@ -620,141 +596,6 @@ if __name__ == '__main__':
         discr_steps=discr_steps
     )
 
-    print('TMB Example:')
     print(marg_feat_order, distr.shape)
-    print(distr)
-    print(distr.sum())
+    print(distr / distr.sum(dim=1, keepdim=True))
     print()
-
-# PSTH Example
-  #We know who have had treatment before (1) are less likely to respond
-    cond_features = ['Systemic_therapy_history']
-    cond_data = [0] #0,1
-    marg_features = ['Response']
-
-    discr_steps = int(1e5)
-
-    distr, marg_feat_order = get_distribution(
-        mps=tn_model,
-        cond_features=cond_features,
-        cond_data=cond_data,
-        marg_features=marg_features,
-        in_features=featuresNA,
-        out_feature=phenoNA,
-        num_features=numeric_featuresNA,
-        n_classes=n_classes,
-        phys_dim=phys_dim,
-        discr_steps=discr_steps
-    )
-
-    print('PSTH Example:')
-    print(marg_feat_order, distr.shape)
-    print(distr)
-    print(distr.sum())
-    print()
-
-# Age Example
-  #We know age has the smallest impact
-    cond_features=['Age']
-    cond_data_unscaled = [80] #30,50,80
-    cond_data_unscaled_df= pd.DataFrame([cond_data_unscaled], columns=cond_features)
-    cond_data_df= scale_input(cond_data_unscaled_df)
-    cond_data=cond_data_df.iloc[0].tolist()
-
-    marg_features = ['Response']
-
-    discr_steps = int(1e5)
-
-    distr, marg_feat_order = get_distribution(
-        mps=tn_model,
-        cond_features=cond_features,
-        cond_data=cond_data,
-        marg_features=marg_features,
-        in_features=featuresNA,
-        out_feature=phenoNA,
-        num_features=numeric_featuresNA,
-        n_classes=n_classes,
-        phys_dim=phys_dim,
-        discr_steps=discr_steps
-    )
-
-    print('Age Example:')
-    print(marg_feat_order, distr.shape)
-    print(distr)
-    print(distr.sum())
-    print()
-
-#Now let's compute the examples from the paper
-#Patient 1:Cancer: Melanoma History: No Age: 64 Albumin: 4.8 g l−1
-#NLR: 4.7 PD-L1: – TMB: 21 mut per Mb
-
-    cond_features = ['TMB', 'Albumin', 'NLR', 'Age', 'Systemic_therapy_history',
-                  'CancerType1', 'CancerType2', 'CancerType3', 'CancerType4',
-                  'CancerType5', 'CancerType6', 'CancerType7', 'CancerType8',
-                  'CancerType9', 'CancerType10', 'CancerType11', 'CancerType12',
-                  'CancerType13', 'CancerType14', 'CancerType15', 'CancerType16']
-
-    cond_data_unscaled = [21, 4.8, 4.7, 64, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]
-    cond_data_unscaled_df= pd.DataFrame([cond_data_unscaled], columns=cond_features)
-    cond_data_df= scale_input(cond_data_unscaled_df)
-    cond_data=cond_data_df.iloc[0].tolist()
-
-    marg_features = ['Response']
-
-    discr_steps = int(1e5)
-
-    distr, marg_feat_order = get_distribution(
-        mps=tn_model,
-        cond_features=cond_features,
-        cond_data=cond_data,
-        marg_features=marg_features,
-        in_features=featuresNA,
-        out_feature=phenoNA,
-        num_features=numeric_featuresNA,
-        n_classes=n_classes,
-        phys_dim=phys_dim,
-        discr_steps=discr_steps
-    )
-
-    print('Patient 1:')
-    print(marg_feat_order, distr.shape)
-    print(distr)
-    print(distr.sum())
-    print()
-
-#Patient 2:Cancer: Breast History: No Age: 42 Albumin: 4.6
-#NLR: 2.3 PD-L1: – TMB:5
-
-    cond_features = ['TMB', 'Albumin', 'NLR', 'Age', 'Systemic_therapy_history',
-                  'CancerType1', 'CancerType2', 'CancerType3', 'CancerType4',
-                  'CancerType5', 'CancerType6', 'CancerType7', 'CancerType8',
-                  'CancerType9', 'CancerType10', 'CancerType11', 'CancerType12',
-                  'CancerType13', 'CancerType14', 'CancerType15', 'CancerType16']
-    cond_data_unscaled = [5,4.6,2.3,42,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
-    cond_data_unscaled_df= pd.DataFrame([cond_data_unscaled], columns=cond_features)
-    cond_data_df= scale_input(cond_data_unscaled_df)
-    cond_data=cond_data_df.iloc[0].tolist()
-
-    marg_features = ['Response']
-
-    discr_steps = int(1e5)
-
-    distr, marg_feat_order = get_distribution(
-        mps=tn_model,
-        cond_features=cond_features,
-        cond_data=cond_data,
-        marg_features=marg_features,
-        in_features=featuresNA,
-        out_feature=phenoNA,
-        num_features=numeric_featuresNA,
-        n_classes=n_classes,
-        phys_dim=phys_dim,
-        discr_steps=discr_steps
-    )
-
-    print('Patient 2:')
-    print(marg_feat_order, distr.shape)
-    print(distr)
-    print(distr.sum())
-    print()
-
