@@ -188,6 +188,12 @@ if __name__ == '__main__':
         
         for i in range(100):
             print(comb, C, l1, i)
+            
+            # This is to skip previously tensorized models
+            cores_dir = os.path.join(tt_comb_dir, f'{C}_{l1}_{i}_cores.pkl')
+            if os.path.exists(cores_dir):
+                continue
+            
             params_dir = os.path.join(comb_dir, f'{C}_{l1}_{i}_params.pkl')
             params = joblib.load(params_dir)
             
