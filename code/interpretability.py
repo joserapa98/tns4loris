@@ -490,7 +490,280 @@ if __name__ == '__main__':
                 patient_df[feature] = fit_scalers[feature].transform(patient_df[[feature]])
         patient_list=patient_df.iloc[0].tolist()
         return patient_list
+
+
+        mean_TMB=scale_input([np.mean(data_no_nans['TMB'])],['TMB'])[0]
+    mean_Albumin=scale_input([np.mean(data_no_nans['Albumin'])],['Albumin'])[0]
+    mean_NLR=scale_input([np.mean(data_no_nans['NLR'])],['NLR'])[0]
+    mean_Age=scale_input([np.mean(data_no_nans['Age'])],['Age'])[0]
+    print(mean_TMB,mean_Albumin,mean_NLR,mean_Age)
+
+    #find most common cancer variable
+    cancer_variables=['CancerType1', 'CancerType2', 'CancerType3', 'CancerType4',
+                  'CancerType5', 'CancerType6', 'CancerType7', 'CancerType8',
+                  'CancerType9', 'CancerType10', 'CancerType11', 'CancerType12',
+                  'CancerType13', 'CancerType14', 'CancerType15', 'CancerType16']
+    freq=0
+    for v in cancer_variables:
+        sum=np.sum(data_no_nans[v])
+        if sum>freq:
+            most_common=v
+            freq=sum
+    print('The most common cancer type is',most_common)
+    #most common type in Cancer Type 11
+
+    print('The number of patients with PSTH=1:', np.sum(data_no_nans['Systemic_therapy_history']))
+    print('The number of patients with PSTH=0:', len(data_no_nans['Systemic_therapy_history']) - np.sum(data_no_nans['Systemic_therapy_history']))
+    #most patient have had PSTH
+
+
+    def feature_sensitivity(feature):
+        '''This function marginalizes on all variables, setting them 
+        to the mean value for each feature. The feature of interest is perturbed
+        between 0 and 1'''
         
+        cond_features = ['TMB', 'Albumin', 'NLR', 'Age', 'Systemic_therapy_history',
+                  'CancerType1', 'CancerType2', 'CancerType3', 'CancerType4',
+                  'CancerType5', 'CancerType6', 'CancerType7', 'CancerType8',
+                  'CancerType9', 'CancerType10', 'CancerType11', 'CancerType12',
+                  'CancerType13', 'CancerType14', 'CancerType15', 'CancerType16']
+        marg_features = ['Response']
+        discr_steps = int(1e5)
+        xvals = np.linspace(0.0, 1.0, 500)
+        yvals = []
+
+        for j in xvals:
+            if feature=='TMB':
+                cond_data=[j,mean_Albumin,mean_NLR,mean_Age,1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0]
+            elif feature=='Albumin':
+                cond_data=[mean_TMB,j,mean_NLR,mean_Age,1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0]
+            elif feature=='NLR':
+                cond_data=[mean_TMB,mean_Albumin,j,mean_Age,1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0]
+            elif feature=='Age':
+                cond_data=[mean_TMB,mean_Albumin,mean_NLR,j,1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0]
+
+            distr = get_distribution(
+                mps=tn_model,
+                cond_features=cond_features,
+                cond_data=cond_data,
+                marg_features=marg_features,
+                in_features=featuresNA,
+                out_feature=phenoNA,
+                num_features=numeric_featuresNA,
+                n_classes=n_classes,
+                phys_dim=phys_dim,
+                discr_steps=discr_steps
+            )[0]
+            yvals.append(distr[1])
+
+        # Compute min and max
+        y_min = min(yvals)
+        y_max = max(yvals)
+
+        # Print min and max
+        print(f'Range: {y_min},{y_max}')
+
+        # Plot
+        plt.plot(xvals, yvals)
+        plt.xlabel(f'{feature} Level')
+        plt.ylabel('Response Probability')
+        plt.title(f'Sensitivity of {feature} Feature')
+        plt.ylim(0, 1)
+        plt.show()
+
+    def feature_sensitivity_derivs(feature):
+        '''This function computes the slope of the feature change
+        at every point between 0 and 1, then averages these slopes.'''
+        
+        cond_features = [feature]
+        marg_features = ['Response']
+        discr_steps = int(1e5)
+        xvals = np.linspace(0.0, 1.0, 500)
+        yvals = []
+        delta=0.01
+
+        for j in xvals:
+
+            #compute the response probability right before this point
+            distr_1= get_distribution(
+                mps=tn_model,
+                cond_features=cond_features,
+                cond_data=[j+delta],
+                marg_features=marg_features,
+                in_features=featuresNA,
+                out_feature=phenoNA,
+                num_features=numeric_featuresNA,
+                n_classes=n_classes,
+                phys_dim=phys_dim,
+                discr_steps=discr_steps
+            )[0][1]
+
+
+            #compute the response probability right after this point
+            distr_2= get_distribution(
+                mps=tn_model,
+                cond_features=cond_features,
+                cond_data=[j-delta],
+                marg_features=marg_features,
+                in_features=featuresNA,
+                out_feature=phenoNA,
+                num_features=numeric_featuresNA,
+                n_classes=n_classes,
+                phys_dim=phys_dim,
+                discr_steps=discr_steps
+            )[0][1]
+            #Store the estiamted slope at each point
+            yvals.append((distr_1-distr_2)/2*delta)
+    
+        #Average the sloped at each point
+        #print(yvals)
+        print(feature)
+        print('The average slope is',np.mean(yvals))
+
+
+    def feature_sensitivity_combination_two(feature1, feature2):
+        '''This function marginalizes on all variables, setting them 
+        to the mean value for each feature. The features of interest are perturbed
+        between 0 and 1, and a heatmap of response sensitivity is plotted.'''
+        
+        cond_features = ['TMB', 'Albumin', 'NLR', 'Age', 'Systemic_therapy_history',
+                        'CancerType1', 'CancerType2', 'CancerType3', 'CancerType4',
+                        'CancerType5', 'CancerType6', 'CancerType7', 'CancerType8',
+                        'CancerType9', 'CancerType10', 'CancerType11', 'CancerType12',
+                        'CancerType13', 'CancerType14', 'CancerType15', 'CancerType16']
+        marg_features = ['Response']
+        discr_steps = int(1e5)
+        xvals = np.linspace(0.0, 1.0, 500)
+        yvals = []
+
+        cond_data = [1, mean_Albumin, mean_NLR, mean_Age, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0]
+
+        for j in xvals:
+            if feature1 == 'TMB':
+                cond_data[0] = j
+            elif feature1 == 'Albumin':
+                cond_data[1] = j
+            elif feature1 == 'NLR':
+                cond_data[2] = j
+            elif feature1 == 'Age':
+                cond_data[3] = j
+
+            for i in xvals:
+                if feature2 == 'TMB':
+                    cond_data[0] = i
+                elif feature2 == 'Albumin':
+                    cond_data[1] = i
+                elif feature2 == 'NLR':
+                    cond_data[2] = i
+                elif feature2 == 'Age':
+                    cond_data[3] = i
+
+                distr = get_distribution(
+                    mps=tn_model,
+                    cond_features=cond_features,
+                    cond_data=cond_data,
+                    marg_features=marg_features,
+                    in_features=featuresNA,
+                    out_feature=phenoNA,
+                    num_features=numeric_featuresNA,
+                    n_classes=n_classes,
+                    phys_dim=phys_dim,
+                    discr_steps=discr_steps
+                )[0]
+                yvals.append(distr[1])
+
+        # Compute min and max
+        y_min = min(yvals)
+        y_max = max(yvals)
+        print(f'Range: {y_min}, {y_max}')
+
+        # Plotting heatmap
+        size = len(xvals)
+        heatmap_vals = np.array(yvals).reshape((size, size))
+
+        plt.figure(figsize=(8, 6))
+        sns.heatmap(
+            heatmap_vals,
+            xticklabels=np.round(xvals, 2),
+            yticklabels=np.round(xvals, 2),
+            cmap="viridis",
+            cbar_kws={'label': 'Response Probability'}
+        )
+        plt.xlabel(feature2)
+        plt.ylabel(feature1)
+        plt.title(f'Sensitivity Heatmap: {feature1} vs {feature2}')
+        plt.tight_layout()
+        plt.show()
+
+
+    def feature_sensitivity_combination_three(feature1, feature2,feature3):
+        '''This function marginalizes on all variables, setting them 
+        to the mean value for each feature. The features of interest is perturbed
+        between 0 and 1'''
+        
+        cond_features = ['TMB', 'Albumin', 'NLR', 'Age', 'Systemic_therapy_history',
+                'CancerType1', 'CancerType2', 'CancerType3', 'CancerType4',
+                'CancerType5', 'CancerType6', 'CancerType7', 'CancerType8',
+                'CancerType9', 'CancerType10', 'CancerType11', 'CancerType12',
+                'CancerType13', 'CancerType14', 'CancerType15', 'CancerType16']
+        marg_features = ['Response']
+        discr_steps = int(1e5)
+        xvals = np.linspace(0.0, 1.0, 500)
+        yvals = []
+
+        cond_data=[mean_TMB,mean_Albumin,mean_NLR,mean_Age,1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0]
+        for j in xvals:
+            if feature1=='TMB':
+                cond_data[0]=j
+            elif feature1=='Albumin':
+                cond_data[1]=j
+            elif feature1=='NLR':
+                cond_data[2]=j
+            elif feature1=='Age':
+                cond_data[3]=j
+
+            for i in xvals:
+                if feature2=='TMB':
+                    cond_data[0]=i
+                elif feature2=='Albumin':
+                    cond_data[1]=i
+                elif feature2=='NLR':
+                    cond_data[2]=i
+                elif feature2=='Age':
+                    cond_data[3]=i
+
+                for k in xvals:
+
+                    if feature3=='TMB':
+                        cond_data[0]=k
+                    elif feature3=='Albumin':
+                        cond_data[1]=k
+                    elif feature3=='NLR':
+                        cond_data[2]=k
+                    elif feature3=='Age':
+                        cond_data[3]=k
+
+                    distr = get_distribution(
+                        mps=tn_model,
+                        cond_features=cond_features,
+                        cond_data=cond_data,
+                        marg_features=marg_features,
+                        in_features=featuresNA,
+                        out_feature=phenoNA,
+                        num_features=numeric_featuresNA,
+                        n_classes=n_classes,
+                        phys_dim=phys_dim,
+                        discr_steps=discr_steps
+                    )[0]
+
+                    yvals.append(distr[1])
+
+        # Compute min and max
+        y_min = min(yvals)
+        y_max = max(yvals)
+
+        print(f'Range: {y_min},{y_max}')
+
     # PSTH Example
     #We know who have had treatment before (1) are less likely to respond
     # Conditioning on 1: 0.513,0.487
