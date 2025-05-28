@@ -451,115 +451,10 @@ if __name__ == '__main__':
                            y_test=yt_test)
 
 
-    # Get conditional/marginal distribution
-    # -------------------------------------
-
-    # We need to specify the condition and marginal variables. The rest will be
-    # marginalized out. The "Response" feature can be included as condition or
-    # marginal
-
-    # Select features on which we condition
-    cond_features = ['TMB', 'Albumin']
-
-    # Create tensor with values (already scaled to [0, 1])
-    # for conditioned features
-    cond_data = [0.2, 0.9]  # Just an example
-
-    # Select features which we marginalize
-    marg_features = ['Systemic_therapy_history', 'Response']
-
-    # In this example, we will get the distribution 
-    # P('Systemic_therapy_history', 'Response' | 'TMB', 'Albumin'),
-    # marginalizing out the rest of the features
-
-    # The distribution will be given as a tensor with shape:
-    # (dim_marg_1, ..., dim_marg_n), with "dim_marg_{i}" being the dimensions of
-    # each marginal feature. These marginal features could be returned in a
-    # different order as the one specified in "marg_features". The order will
-    # be returned in the list "marg_feat_order"
-
-    # For continuous features, the dimension of the marginal features will be the
-    # specified "discr_steps"
-
-    discr_steps = int(1e5)
-
-    distr, marg_feat_order = get_distribution(
-        mps=tn_model,
-        cond_features=cond_features,
-        cond_data=cond_data,
-        marg_features=marg_features,
-        in_features=featuresNA,
-        out_feature=phenoNA,
-        num_features=numeric_featuresNA,
-        n_classes=n_classes,
-        phys_dim=phys_dim,
-        discr_steps=discr_steps
-    )
-
-    print(marg_feat_order, distr.shape)
-    print(distr)
-    print(distr.sum())
-    print(marg_feat_order[1], distr.sum(dim=0))
-    print(marg_feat_order[0], distr.sum(dim=1))
-    print()
-
-
-    # Example 2
-    cond_features = ['Response']
-    cond_data = [1.]
-
-    marg_features = ['TMB']
-
-    discr_steps = int(1e1)  # int(1e5)
-
-    distr, marg_feat_order = get_distribution(
-        mps=tn_model,
-        cond_features=cond_features,
-        cond_data=cond_data,
-        marg_features=marg_features,
-        in_features=featuresNA,
-        out_feature=phenoNA,
-        num_features=numeric_featuresNA,
-        n_classes=n_classes,
-        phys_dim=phys_dim,
-        discr_steps=discr_steps
-    )
-
-    print(marg_feat_order, distr.shape)
-    print(distr)
-    print(distr.sum())
-    print()
-
-
-    # Exampl 3
-    cond_features = ['Systemic_therapy_history']
-    cond_data = [0.]
-
-    marg_features = ['Response']
-
-    discr_steps = int(1e5)
-
-    distr, marg_feat_order = get_distribution(
-        mps=tn_model,
-        cond_features=cond_features,
-        cond_data=cond_data,
-        marg_features=marg_features,
-        in_features=featuresNA,
-        out_feature=phenoNA,
-        num_features=numeric_featuresNA,
-        n_classes=n_classes,
-        phys_dim=phys_dim,
-        discr_steps=discr_steps
-    )
-
-    print(marg_feat_order, distr.shape)
-    print(distr)
-    print(distr.sum())
-    print()
-
- #-------------------------------------------------------------
-    #****Create scalers for each variable******
-    data_file = os.path.join(input_dir, 'AllData.xlsx')
+        #-------------------------------------------------------------
+    #****Create Scalers for each variable******
+    data_dir = os.path.join(cwd, '..', '02.Input')
+    data_file = os.path.join(data_dir, 'AllData.xlsx')
     # Data truncation
     TMB_upper = 50
     Age_upper = 85
@@ -577,59 +472,34 @@ if __name__ == '__main__':
     data['TMB'] = [c if c < TMB_upper else TMB_upper for c in data['TMB']]
     data['Age'] = [c if c < Age_upper else Age_upper for c in data['Age']]
     data['NLR'] = [c if c < NLR_upper else NLR_upper for c in data['NLR']]
-
     all_features = featuresNA + [phenoNA]
     data_no_nans = data[all_features].dropna(axis=0)
 
     fit_scalers = {}
     for feature in nonbinary:
-        scaler = StandardScaler()
+        scaler = MinMaxScaler()
         scaler.fit(data_no_nans[[feature]])
         fit_scalers[feature] = scaler
 
-    def scale_input(patient):
-        for feature in patient.columns:
+    def scale_input(patient,cond_features):
+        '''Takes in a list of features adn their names and scales each one using MinMax scaler fit to Chowell train data'''
+        patient_df= pd.DataFrame([patient], columns=cond_features)
+        
+        for feature in patient_df.columns:
             if feature in fit_scalers:
-                patient[feature] = fit_scalers[feature].transform(patient[[feature]])
-            return patient
-#  #-------------------------------------------------------------
+                patient_df[feature] = fit_scalers[feature].transform(patient_df[[feature]])
+        patient_list=patient_df.iloc[0].tolist()
+        return patient_list
+        
+    # PSTH Example
+    #We know who have had treatment before (1) are less likely to respond
+    # Conditioning on 1: 0.513,0.487
+    #On 0: 0.2928,0.7072
 
-# TMB Example
-  #We know that patients with TMB above 27/50 should respond
-    cond_features = ['TMB']
-    cond_data_unscaled = [27] #10,27,30
-
-    cond_data_unscaled_df= pd.DataFrame([cond_data_unscaled], columns=cond_features)
-    cond_data_df= scale_input(cond_data_unscaled_df)
-    cond_data=cond_data_df.iloc[0].tolist()
-
-    marg_features = ['Response']
-
-    discr_steps = int(1e5)
-
-    distr, marg_feat_order = get_distribution(
-        mps=tn_model,
-        cond_features=cond_features,
-        cond_data=cond_data,
-        marg_features=marg_features,
-        in_features=featuresNA,
-        out_feature=phenoNA,
-        num_features=numeric_featuresNA,
-        n_classes=n_classes,
-        phys_dim=phys_dim,
-        discr_steps=discr_steps
-    )
-
-    print('TMB Example:')
-    print(marg_feat_order, distr.shape)
-    print(distr)
-    print(distr.sum())
-    print()
-
-# PSTH Example
-  #We know who have had treatment before (1) are less likely to respond
     cond_features = ['Systemic_therapy_history']
-    cond_data = [0] #0,1
+    cond_data = [0]
+    #cond_data=[1]
+
     marg_features = ['Response']
 
     discr_steps = int(1e5)
@@ -653,14 +523,15 @@ if __name__ == '__main__':
     print(distr.sum())
     print()
 
-# Age Example
-  #We know age has the smallest impact
-    cond_features=['Age']
-    cond_data_unscaled = [80] #30,50,80
-    cond_data_unscaled_df= pd.DataFrame([cond_data_unscaled], columns=cond_features)
-    cond_data_df= scale_input(cond_data_unscaled_df)
-    cond_data=cond_data_df.iloc[0].tolist()
+    #TMB Example
+    #We know who have had treatment before (1) are less likely to respond
+    # Conditioning on 1: 0.513,0.487
+    #On 0: 0.2928,0.7072
 
+    cond_features = ['TMB']
+    cond_data_unscaled = [2]
+    cond_data_scaled=scale_input(cond_data_unscaled,cond_features)
+    print(cond_data_scaled)
     marg_features = ['Response']
 
     discr_steps = int(1e5)
@@ -668,7 +539,7 @@ if __name__ == '__main__':
     distr, marg_feat_order = get_distribution(
         mps=tn_model,
         cond_features=cond_features,
-        cond_data=cond_data,
+        cond_data=cond_data_scaled,
         marg_features=marg_features,
         in_features=featuresNA,
         out_feature=phenoNA,
@@ -678,15 +549,19 @@ if __name__ == '__main__':
         discr_steps=discr_steps
     )
 
-    print('Age Example:')
+    print('TMB Example:')
     print(marg_feat_order, distr.shape)
     print(distr)
     print(distr.sum())
     print()
 
 #Now let's compute the examples from the paper
+
 #Patient 1:Cancer: Melanoma History: No Age: 64 Albumin: 4.8 g l−1
 #NLR: 4.7 PD-L1: – TMB: 21 mut per Mb
+#Scaled/Converetd: Cancer: 8/16=0.5 History: 0 Age: 64/85=0.753 Albumin: 4.8
+#NLR: 4.7/25: – TMB: 21/50
+
 
     cond_features = ['TMB', 'Albumin', 'NLR', 'Age', 'Systemic_therapy_history',
                   'CancerType1', 'CancerType2', 'CancerType3', 'CancerType4',
@@ -695,9 +570,8 @@ if __name__ == '__main__':
                   'CancerType13', 'CancerType14', 'CancerType15', 'CancerType16']
 
     cond_data_unscaled = [21, 4.8, 4.7, 64, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]
-    cond_data_unscaled_df= pd.DataFrame([cond_data_unscaled], columns=cond_features)
-    cond_data_df= scale_input(cond_data_unscaled_df)
-    cond_data=cond_data_df.iloc[0].tolist()
+    cond_data_scaled= scale_input(cond_data_unscaled,cond_features)
+
 
     marg_features = ['Response']
 
@@ -706,7 +580,7 @@ if __name__ == '__main__':
     distr, marg_feat_order = get_distribution(
         mps=tn_model,
         cond_features=cond_features,
-        cond_data=cond_data,
+        cond_data=cond_data_scaled,
         marg_features=marg_features,
         in_features=featuresNA,
         out_feature=phenoNA,
@@ -715,6 +589,7 @@ if __name__ == '__main__':
         phys_dim=phys_dim,
         discr_steps=discr_steps
     )
+
 
     print('Patient 1:')
     print(marg_feat_order, distr.shape)
@@ -731,9 +606,8 @@ if __name__ == '__main__':
                   'CancerType9', 'CancerType10', 'CancerType11', 'CancerType12',
                   'CancerType13', 'CancerType14', 'CancerType15', 'CancerType16']
     cond_data_unscaled = [5,4.6,2.3,42,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
-    cond_data_unscaled_df= pd.DataFrame([cond_data_unscaled], columns=cond_features)
-    cond_data_df= scale_input(cond_data_unscaled_df)
-    cond_data=cond_data_df.iloc[0].tolist()
+    cond_data_scaled= scale_input(cond_data_unscaled,cond_features)
+
 
     marg_features = ['Response']
 
@@ -742,7 +616,7 @@ if __name__ == '__main__':
     distr, marg_feat_order = get_distribution(
         mps=tn_model,
         cond_features=cond_features,
-        cond_data=cond_data,
+        cond_data=cond_data_scaled,
         marg_features=marg_features,
         in_features=featuresNA,
         out_feature=phenoNA,
@@ -757,4 +631,5 @@ if __name__ == '__main__':
     print(distr)
     print(distr.sum())
     print()
+
 
