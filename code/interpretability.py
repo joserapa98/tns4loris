@@ -467,3 +467,456 @@ if __name__ == '__main__':
                            num_features=numeric_featuresNA,
                            x_test=xt_test,
                            y_test=yt_test)
+
+    #-------------------------------------------------------------
+    #****Create Scalars for each variable******
+    data_file = os.path.join(input_dir, 'AllData.xlsx')
+    # Data truncation
+    TMB_upper = 50
+    Age_upper = 85
+    NLR_upper = 25
+    featuresNA = ['TMB', 'Albumin', 'NLR', 'Age', 'Systemic_therapy_history',
+                    'CancerType1', 'CancerType2', 'CancerType3', 'CancerType4',
+                    'CancerType5', 'CancerType6', 'CancerType7', 'CancerType8',
+                    'CancerType9', 'CancerType10', 'CancerType11', 'CancerType12',
+                    'CancerType13', 'CancerType14', 'CancerType15', 'CancerType16']
+    nonbinary=['TMB', 'Albumin', 'NLR', 'Age']
+    phenoNA = 'Response'
+    data = pd.read_excel(data_file, sheet_name='Chowell_train', index_col=0)
+
+    # Data truncation
+    data['TMB'] = [c if c < TMB_upper else TMB_upper for c in data['TMB']]
+    data['Age'] = [c if c < Age_upper else Age_upper for c in data['Age']]
+    data['NLR'] = [c if c < NLR_upper else NLR_upper for c in data['NLR']]
+    all_features = featuresNA + [phenoNA]
+    data_no_nans = data[all_features].dropna(axis=0)
+
+    fit_scalers = {}
+    for feature in nonbinary:
+        scaler = MinMaxScaler()
+        scaler.fit(data_no_nans[[feature]])
+        fit_scalers[feature] = scaler
+
+    def scale_input(patient,cond_features):
+        '''Takes in a list of features adn their names and scales each one using MinMax scaler fit to Chowell train data'''
+        patient_df= pd.DataFrame([patient], columns=cond_features)
+        
+        for feature in patient_df.columns:
+            if feature in fit_scalers:
+                patient_df[feature] = fit_scalers[feature].transform(patient_df[[feature]])
+        patient_list=patient_df.iloc[0].tolist()
+        return patient_list
+
+
+    mean_TMB=scale_input([np.mean(data_no_nans['TMB'])],['TMB'])[0]
+    mean_Albumin=scale_input([np.mean(data_no_nans['Albumin'])],['Albumin'])[0]
+    mean_NLR=scale_input([np.mean(data_no_nans['NLR'])],['NLR'])[0]
+    mean_Age=scale_input([np.mean(data_no_nans['Age'])],['Age'])[0]
+    print(mean_TMB,mean_Albumin,mean_NLR,mean_Age)
+
+    #find most common cancer variable
+    cancer_variables=['CancerType1', 'CancerType2', 'CancerType3', 'CancerType4',
+                  'CancerType5', 'CancerType6', 'CancerType7', 'CancerType8',
+                  'CancerType9', 'CancerType10', 'CancerType11', 'CancerType12',
+                  'CancerType13', 'CancerType14', 'CancerType15', 'CancerType16']
+    freq=0
+    for v in cancer_variables:
+        sum=np.sum(data_no_nans[v])
+        if sum>freq:
+            most_common=v
+            freq=sum
+    print('The most common cancer type is',most_common)
+    #most common type in Cancer Type 11
+
+    print('The number of patients with PSTH=1:', np.sum(data_no_nans['Systemic_therapy_history']))
+    print('The number of patients with PSTH=0:', len(data_no_nans['Systemic_therapy_history']) - np.sum(data_no_nans['Systemic_therapy_history']))
+    #most patient have had PSTH
+
+
+    def feature_sensitivity(feature):
+        '''This function marginalizes on all variables, setting them 
+        to the mean value for each feature. The feature of interest is perturbed
+        between 0 and 1'''
+        
+        cond_features = ['TMB', 'Albumin', 'NLR', 'Age', 'Systemic_therapy_history',
+                  'CancerType1', 'CancerType2', 'CancerType3', 'CancerType4',
+                  'CancerType5', 'CancerType6', 'CancerType7', 'CancerType8',
+                  'CancerType9', 'CancerType10', 'CancerType11', 'CancerType12',
+                  'CancerType13', 'CancerType14', 'CancerType15', 'CancerType16']
+        marg_features = ['Response']
+        discr_steps = int(1e5)
+        xvals = np.linspace(0.0, 1.0, 500)
+        yvals = []
+
+        for j in xvals:
+            if feature=='TMB':
+                cond_data=[j,mean_Albumin,mean_NLR,mean_Age,1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0]
+            elif feature=='Albumin':
+                cond_data=[mean_TMB,j,mean_NLR,mean_Age,1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0]
+            elif feature=='NLR':
+                cond_data=[mean_TMB,mean_Albumin,j,mean_Age,1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0]
+            elif feature=='Age':
+                cond_data=[mean_TMB,mean_Albumin,mean_NLR,j,1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0]
+
+            distr = get_distribution(
+                mps=tn_model,
+                cond_features=cond_features,
+                cond_data=cond_data,
+                marg_features=marg_features,
+                in_features=featuresNA,
+                out_feature=phenoNA,
+                num_features=numeric_featuresNA,
+                n_classes=n_classes,
+                phys_dim=phys_dim,
+                discr_steps=discr_steps
+            )[0]
+            yvals.append(distr[1])
+
+        # Compute min and max
+        y_min = min(yvals)
+        y_max = max(yvals)
+
+        # Print min and max
+        print(f'Range: {y_min},{y_max}')
+
+        # Plot
+        plt.plot(xvals, yvals)
+        plt.xlabel(f'{feature} Level')
+        plt.ylabel('Response Probability')
+        plt.title(f'Sensitivity of {feature} Feature')
+        plt.ylim(0, 1)
+        plt.show()
+
+    def feature_sensitivity_derivs(feature):
+        '''This function computes the slope of the feature change
+        at every point between 0 and 1, then averages these slopes.'''
+        
+        cond_features = [feature]
+        marg_features = ['Response']
+        discr_steps = int(1e5)
+        xvals = np.linspace(0.0, 1.0, 500)
+        yvals = []
+        delta=0.01
+
+        for j in xvals:
+
+            #compute the response probability right before this point
+            distr_1= get_distribution(
+                mps=tn_model,
+                cond_features=cond_features,
+                cond_data=[j+delta],
+                marg_features=marg_features,
+                in_features=featuresNA,
+                out_feature=phenoNA,
+                num_features=numeric_featuresNA,
+                n_classes=n_classes,
+                phys_dim=phys_dim,
+                discr_steps=discr_steps
+            )[0][1]
+
+
+            #compute the response probability right after this point
+            distr_2= get_distribution(
+                mps=tn_model,
+                cond_features=cond_features,
+                cond_data=[j-delta],
+                marg_features=marg_features,
+                in_features=featuresNA,
+                out_feature=phenoNA,
+                num_features=numeric_featuresNA,
+                n_classes=n_classes,
+                phys_dim=phys_dim,
+                discr_steps=discr_steps
+            )[0][1]
+            #Store the estiamted slope at each point
+            yvals.append((distr_1-distr_2)/2*delta)
+    
+        #Average the sloped at each point
+        #print(yvals)
+        print(feature)
+        print('The average slope is',np.mean(yvals))
+
+
+    def feature_sensitivity_combination_two(feature1, feature2):
+        '''This function marginalizes on all variables, setting them 
+        to the mean value for each feature. The features of interest are perturbed
+        between 0 and 1, and a heatmap of response sensitivity is plotted.'''
+        
+        cond_features = ['TMB', 'Albumin', 'NLR', 'Age', 'Systemic_therapy_history',
+                        'CancerType1', 'CancerType2', 'CancerType3', 'CancerType4',
+                        'CancerType5', 'CancerType6', 'CancerType7', 'CancerType8',
+                        'CancerType9', 'CancerType10', 'CancerType11', 'CancerType12',
+                        'CancerType13', 'CancerType14', 'CancerType15', 'CancerType16']
+        marg_features = ['Response']
+        discr_steps = int(1e5)
+        xvals = np.linspace(0.0, 1.0, 500)
+        yvals = []
+
+        cond_data = [1, mean_Albumin, mean_NLR, mean_Age, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0]
+
+        for j in xvals:
+            if feature1 == 'TMB':
+                cond_data[0] = j
+            elif feature1 == 'Albumin':
+                cond_data[1] = j
+            elif feature1 == 'NLR':
+                cond_data[2] = j
+            elif feature1 == 'Age':
+                cond_data[3] = j
+
+            for i in xvals:
+                if feature2 == 'TMB':
+                    cond_data[0] = i
+                elif feature2 == 'Albumin':
+                    cond_data[1] = i
+                elif feature2 == 'NLR':
+                    cond_data[2] = i
+                elif feature2 == 'Age':
+                    cond_data[3] = i
+
+                distr = get_distribution(
+                    mps=tn_model,
+                    cond_features=cond_features,
+                    cond_data=cond_data,
+                    marg_features=marg_features,
+                    in_features=featuresNA,
+                    out_feature=phenoNA,
+                    num_features=numeric_featuresNA,
+                    n_classes=n_classes,
+                    phys_dim=phys_dim,
+                    discr_steps=discr_steps
+                )[0]
+                yvals.append(distr[1])
+
+        # Compute min and max
+        y_min = min(yvals)
+        y_max = max(yvals)
+        print(f'Range: {y_min}, {y_max}')
+
+        # Plotting heatmap
+        size = len(xvals)
+        heatmap_vals = np.array(yvals).reshape((size, size))
+
+        plt.figure(figsize=(8, 6))
+        sns.heatmap(
+            heatmap_vals,
+            xticklabels=np.round(xvals, 2),
+            yticklabels=np.round(xvals, 2),
+            cmap="viridis",
+            cbar_kws={'label': 'Response Probability'}
+        )
+        plt.xlabel(feature2)
+        plt.ylabel(feature1)
+        plt.title(f'Sensitivity Heatmap: {feature1} vs {feature2}')
+        plt.tight_layout()
+        plt.show()
+
+
+    def feature_sensitivity_combination_three(feature1, feature2,feature3):
+        '''This function marginalizes on all variables, setting them 
+        to the mean value for each feature. The features of interest is perturbed
+        between 0 and 1'''
+        
+        cond_features = ['TMB', 'Albumin', 'NLR', 'Age', 'Systemic_therapy_history',
+                'CancerType1', 'CancerType2', 'CancerType3', 'CancerType4',
+                'CancerType5', 'CancerType6', 'CancerType7', 'CancerType8',
+                'CancerType9', 'CancerType10', 'CancerType11', 'CancerType12',
+                'CancerType13', 'CancerType14', 'CancerType15', 'CancerType16']
+        marg_features = ['Response']
+        discr_steps = int(1e5)
+        xvals = np.linspace(0.0, 1.0, 500)
+        yvals = []
+
+        cond_data=[mean_TMB,mean_Albumin,mean_NLR,mean_Age,1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0]
+        for j in xvals:
+            if feature1=='TMB':
+                cond_data[0]=j
+            elif feature1=='Albumin':
+                cond_data[1]=j
+            elif feature1=='NLR':
+                cond_data[2]=j
+            elif feature1=='Age':
+                cond_data[3]=j
+
+            for i in xvals:
+                if feature2=='TMB':
+                    cond_data[0]=i
+                elif feature2=='Albumin':
+                    cond_data[1]=i
+                elif feature2=='NLR':
+                    cond_data[2]=i
+                elif feature2=='Age':
+                    cond_data[3]=i
+
+                for k in xvals:
+
+                    if feature3=='TMB':
+                        cond_data[0]=k
+                    elif feature3=='Albumin':
+                        cond_data[1]=k
+                    elif feature3=='NLR':
+                        cond_data[2]=k
+                    elif feature3=='Age':
+                        cond_data[3]=k
+
+                    distr = get_distribution(
+                        mps=tn_model,
+                        cond_features=cond_features,
+                        cond_data=cond_data,
+                        marg_features=marg_features,
+                        in_features=featuresNA,
+                        out_feature=phenoNA,
+                        num_features=numeric_featuresNA,
+                        n_classes=n_classes,
+                        phys_dim=phys_dim,
+                        discr_steps=discr_steps
+                    )[0]
+
+                    yvals.append(distr[1])
+
+        # Compute min and max
+        y_min = min(yvals)
+        y_max = max(yvals)
+
+        print(f'Range: {y_min},{y_max}')
+
+    # Example 5
+    #We know who have had treatment before (1) are less likely to respond
+    # Conditioning on 1: 0.513,0.487
+    #On 0: 0.2928,0.7072
+
+    cond_features = ['Systemic_therapy_history']
+    cond_data = [0]
+    #cond_data=[0]
+
+    marg_features = ['Response']
+
+    discr_steps = int(1e5)
+
+    distr, marg_feat_order = get_distribution(
+        mps=tn_model,
+        cond_features=cond_features,
+        cond_data=cond_data,
+        marg_features=marg_features,
+        in_features=featuresNA,
+        out_feature=phenoNA,
+        num_features=numeric_featuresNA,
+        n_classes=n_classes,
+        phys_dim=phys_dim,
+        discr_steps=discr_steps
+    )
+
+    print('PSTH Example:')
+    print(marg_feat_order, distr.shape)
+    print(distr)
+    print(distr.sum())
+    print()
+
+    # Example 5
+    #We know who have had treatment before (1) are less likely to respond
+    # Conditioning on 1: 0.513,0.487
+    #On 0: 0.2928,0.7072
+
+    cond_features = ['TMB']
+    cond_data_unscaled = [2]
+    cond_data_scaled=scale_input(cond_data_unscaled,cond_features)
+    print(cond_data_scaled)
+    marg_features = ['Response']
+
+    discr_steps = int(1e5)
+
+    distr, marg_feat_order = get_distribution(
+        mps=tn_model,
+        cond_features=cond_features,
+        cond_data=cond_data_scaled,
+        marg_features=marg_features,
+        in_features=featuresNA,
+        out_feature=phenoNA,
+        num_features=numeric_featuresNA,
+        n_classes=n_classes,
+        phys_dim=phys_dim,
+        discr_steps=discr_steps
+    )
+
+    print('TMB Example:')
+    print(marg_feat_order, distr.shape)
+    print(distr)
+    print(distr.sum())
+    print()
+
+#Now let's compute the examples from the paper
+
+#Patient 1:Cancer: Melanoma History: No Age: 64 Albumin: 4.8 g l−1
+#NLR: 4.7 PD-L1: – TMB: 21 mut per Mb
+#Scaled/Converetd: Cancer: 8/16=0.5 History: 0 Age: 64/85=0.753 Albumin: 4.8
+#NLR: 4.7/25: – TMB: 21/50
+
+
+    cond_features = ['TMB', 'Albumin', 'NLR', 'Age', 'Systemic_therapy_history',
+                  'CancerType1', 'CancerType2', 'CancerType3', 'CancerType4',
+                  'CancerType5', 'CancerType6', 'CancerType7', 'CancerType8',
+                  'CancerType9', 'CancerType10', 'CancerType11', 'CancerType12',
+                  'CancerType13', 'CancerType14', 'CancerType15', 'CancerType16']
+
+    cond_data_unscaled = [21, 4.8, 4.7, 64, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]
+    cond_data_scaled= scale_input(cond_data_unscaled,cond_features)
+
+
+    marg_features = ['Response']
+
+    discr_steps = int(1e5)
+
+    distr, marg_feat_order = get_distribution(
+        mps=tn_model,
+        cond_features=cond_features,
+        cond_data=cond_data_scaled,
+        marg_features=marg_features,
+        in_features=featuresNA,
+        out_feature=phenoNA,
+        num_features=numeric_featuresNA,
+        n_classes=n_classes,
+        phys_dim=phys_dim,
+        discr_steps=discr_steps
+    )
+
+
+    print('Patient 1:')
+    print(marg_feat_order, distr.shape)
+    print(distr)
+    print(distr.sum())
+    print()
+
+#Patient 2:Cancer: Breast History: No Age: 42 Albumin: 4.6
+#NLR: 2.3 PD-L1: – TMB:5
+
+    cond_features = ['TMB', 'Albumin', 'NLR', 'Age', 'Systemic_therapy_history',
+                  'CancerType1', 'CancerType2', 'CancerType3', 'CancerType4',
+                  'CancerType5', 'CancerType6', 'CancerType7', 'CancerType8',
+                  'CancerType9', 'CancerType10', 'CancerType11', 'CancerType12',
+                  'CancerType13', 'CancerType14', 'CancerType15', 'CancerType16']
+    cond_data_unscaled = [5,4.6,2.3,42,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+    cond_data_scaled= scale_input(cond_data_unscaled,cond_features)
+
+
+    marg_features = ['Response']
+
+    discr_steps = int(1e5)
+
+    distr, marg_feat_order = get_distribution(
+        mps=tn_model,
+        cond_features=cond_features,
+        cond_data=cond_data_scaled,
+        marg_features=marg_features,
+        in_features=featuresNA,
+        out_feature=phenoNA,
+        num_features=numeric_featuresNA,
+        n_classes=n_classes,
+        phys_dim=phys_dim,
+        discr_steps=discr_steps
+    )
+
+    print('Patient 2:')
+    print(marg_feat_order, distr.shape)
+    print(distr)
+    print(distr.sum())
+    print()
