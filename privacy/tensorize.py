@@ -159,8 +159,8 @@ if __name__ == '__main__':
         sys.exit()
     
     if len(args) == 2:
-        l1 = float(args[0])      # [0., 0.5, 1.] -> 1.
-        C = float(args[1])       # [0.1, 1, 10] -> 0.1
+        l1 = float(args[0])      # [0.0, 0.5, 1.0] -> 1.0
+        C = float(args[1])       # [0.1, 1.0, 10]  -> 0.1
     else:
         print('The following arguments should be passed:\n'
               '\t1) <l1> => l1 regularization weight\n'
