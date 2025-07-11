@@ -173,7 +173,16 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
-attacks/models/*
-attacks/tt_models/*
-attacks/datasets/*
-attacks/attack_models/*
+privacy/models/*
+privacy/tt_models/*
+privacy/datasets/*
+privacy/tt_datasets/*
+privacy/attack_models/*
+privacy/attack_tt_models/*
+
+privacy/models_old/*
+privacy/tt_models_old/*
+privacy/datasets_old/*
+privacy/tt_datasets_old/*
+privacy/attack_models_old/*
+privacy/attack_tt_models_old/*
