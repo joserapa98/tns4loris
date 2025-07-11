@@ -286,27 +286,25 @@ if __name__ == '__main__':
                 tt_model.mats_env[j]['right'].change_size(size=bond_dim)
             
             # Randomize gauge
-            # tt_model = tk.models.MPSLayer(tensors=cores)
-            # if not all([b == bond_dim for b in tt_model.bond_dim]):
-            #     print(tt_model.bond_dim)
-            #     raise ValueError('Bond dims not equal')
-            
             for j, node in enumerate(tt_model.mats_env):
-                U = random_unitary(node.size('right'))
+                right_size = node.size('right')
+                # U = random_unitary(right_size)
+                U = torch.randn((right_size, right_size))
                 if j < (len(tt_model.mats_env) - 1):
                     node.tensor = torch.einsum('lir,rk->lik',
                                                 node.tensor, U)
                 if j > 0:
                     node.tensor = torch.einsum('kl,lir->kir',
                                                 prev_U, node.tensor)
-                prev_U = U.clone().H
+                # prev_U = U.clone().H
+                prev_U = torch.linalg.inv(U)
+                # print(U @ prev_U)
             
             # Save model's parameters
             cores = [c.detach() for c in tt_model.tensors]
             cores_dir = os.path.join(tt_comb_dir, f'{C}_{l1}_{i}_cores.pkl')
             torch.save(cores, cores_dir)
             
-            # tt_model = tk.models.MPSLayer(tensors=cores)
             tt_model.trace(torch.zeros(1, xt_sketch.size(1), phys_dim))
 
             # Evaluate final model by dataset

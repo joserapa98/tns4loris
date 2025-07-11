@@ -157,15 +157,19 @@ def create_datasets_tt(model_name, scaler_type, model_type):
                             tt_model.mats_env[j]['right'].change_size(size=bond_dim)
                         
                         # Randomize gauge
-                        for i, node in enumerate(tt_model.mats_env):
-                            U = random_unitary(node.size('right'))
-                            if i < (len(tt_model.mats_env) - 1):
+                        for j, node in enumerate(tt_model.mats_env):
+                            right_size = node.size('right')
+                            # U = random_unitary(right_size)
+                            U = torch.randn((right_size, right_size))
+                            if j < (len(tt_model.mats_env) - 1):
                                 node.tensor = torch.einsum('lir,rk->lik',
-                                                        node.tensor, U)
-                            if i > 0:
+                                                           node.tensor, U)
+                            if j > 0:
                                 node.tensor = torch.einsum('kl,lir->kir',
-                                                        prev_U, node.tensor)
-                            prev_U = U.clone().H
+                                                           prev_U, node.tensor)
+                            # prev_U = U.clone().H
+                            prev_U = torch.linalg.inv(U)
+                            # print(U @ prev_U)
                         
                         cores = tt_model.tensors
                         
