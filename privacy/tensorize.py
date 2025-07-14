@@ -187,7 +187,7 @@ if __name__ == '__main__':
     all_data = load_data(featuresNA, phenoNA, datasets, datasets_ids, scaler_type)
     
     # Tensorization hyperparameters
-    sketch_size    = 200
+    sketch_size    = 100
     phys_dim       = 2
     domain         = torch.linspace(0, 1, phys_dim) if scaler_type == 'minmax' else None
     bond_dim       = 2
