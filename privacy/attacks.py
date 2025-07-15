@@ -221,11 +221,93 @@ def create_datasets_tt(model_name, scaler_type, model_type):
     return all_labels, all_cores, all_bal_accs, all_auc_scores
 
 
+def create_datasets_dp(model_name, scaler_type, model_type):
+    datasets = ['Chowell_train', 'Chowell_test', 'MSK1', 'MSK2', 'Shim_NSCLC',
+                'Kato_panCancer', 'Vanguri_NSCLC', 'Ravi_NSCLC', 'Pradat_panCancer']
+    datasets_ids = list(range(1, len(datasets) + 1))
+    
+    # Create whole models dataset
+    all_labels = []
+    all_params = []
+    all_bal_accs = []
+    all_auc_scores = []
+
+    datasets_dir = os.path.join(cwd, 'privacy', 'dp_datasets',
+                                model_name, scaler_type, model_type)
+    os.makedirs(datasets_dir, exist_ok=True)
+    
+    data_dir = os.path.join(datasets_dir, 'params_multilabel.pt')
+    if not os.path.exists(data_dir):
+        models_dir = os.path.join(cwd, 'privacy', 'dp_models',
+                                  model_name, scaler_type, model_type)
+        
+        for comb in os.listdir(models_dir):
+            print(comb)
+            aux_labels = [int(n) - 1 for n in comb.split('_')]
+            one_hot_label = torch.zeros(len(datasets))
+            one_hot_label[aux_labels] = 1
+            
+            comb_dir = os.path.join(models_dir, comb)
+            for epsilon in [0.001, 0.1, 1.0, 10.0, 100.0]:
+                for i in range(100):
+                    params_file = f'{epsilon}_{i}_params.pkl'
+                    bal_accs_file = f'{epsilon}_{i}_bal_accs.json'
+                    auc_scores_file = f'{epsilon}_{i}_auc_scores.json'
+                    
+                    # params
+                    params_dir = os.path.join(comb_dir, params_file)
+                    if not os.path.exists(params_dir):
+                            continue
+                    
+                    params = joblib.load(params_dir)
+                        
+                    all_labels.append(one_hot_label.clone())
+                    all_params.append(params.clone())
+                    
+                    # bal accs
+                    bal_accs_dir = os.path.join(comb_dir, bal_accs_file)
+                    with open(bal_accs_dir, 'r') as f:
+                        bal_accs_dict = json.load(f)
+                    
+                    bal_accs_vector = torch.zeros(len(datasets) + 1)
+                    for dat_id in datasets_ids:
+                        bal_accs_vector[dat_id - 1] = bal_accs_dict[str(dat_id)]
+                    bal_accs_vector[-1] = bal_accs_dict['all']
+                    
+                    all_bal_accs.append(bal_accs_vector)
+                    
+                    # auc scores
+                    auc_scores_dir = os.path.join(comb_dir, auc_scores_file)
+                    with open(auc_scores_dir, 'r') as f:
+                        auc_scores_dict = json.load(f)
+                    
+                    auc_scores_vector = torch.zeros(len(datasets) + 1)
+                    for dat_id in datasets_ids:
+                        auc_scores_vector[dat_id - 1] = auc_scores_dict[str(dat_id)]
+                    auc_scores_vector[-1] = auc_scores_dict['all']
+                    
+                    all_auc_scores.append(auc_scores_vector)
+
+        all_labels = torch.stack(all_labels, dim=0).int()
+        all_params = torch.stack(all_params, dim=0)
+        all_bal_accs = torch.stack(all_bal_accs, dim=0)
+        all_auc_scores = torch.stack(all_auc_scores, dim=0)
+
+        torch.save((all_labels, all_params, all_bal_accs, all_auc_scores),
+                   data_dir)
+    
+    else:
+        all_labels, all_params, all_bal_accs, all_auc_scores = \
+            torch.load(data_dir, weights_only=True)
+    
+    return all_labels, all_params, all_bal_accs, all_auc_scores
+
+
 def bb_attack(og_model, all_scores, all_labels, model_name, scaler_type,
               model_type, attack_name):
     X, y = all_scores, all_labels
     
-    aux_dir = 'attack_models' if og_model else 'attack_tt_models'
+    aux_dir = f'attack{og_model}_models'
     attack_model_dir = os.path.join(cwd, 'privacy', aux_dir,
                                     model_name, scaler_type, model_type)
     os.makedirs(attack_model_dir, exist_ok=True)
@@ -260,7 +342,7 @@ def wb_attack(og_model, all_params, all_labels, model_name, scaler_type,
               model_type):
     X, y = all_params, all_labels
     
-    aux_dir = 'attack_models' if og_model else 'attack_tt_models'
+    aux_dir = f'attack{og_model}_models'
     attack_model_dir = os.path.join(cwd, 'privacy', aux_dir,
                                     model_name, scaler_type, model_type)
     os.makedirs(attack_model_dir, exist_ok=True)
@@ -309,6 +391,7 @@ if __name__ == '__main__':
               '\t--help, -h\n'
               '\t--og_model\n'
               '\t--tt_model\n'
+              '\t--dp_model\n'
               '\t--vanilla\n'
               '\t--average\n'
               '\t--bb\n'
@@ -318,7 +401,8 @@ if __name__ == '__main__':
     # Read options and arguments
     try:
         opts, args = getopt.getopt(argv[1:], 'h',
-                                   ['help', 'og_model', 'tt_model',
+                                   ['help',
+                                    'og_model', 'tt_model', 'dp_model',
                                     'vanilla', 'average',
                                     'bb', 'wb'])
     except getopt.GetoptError:
@@ -326,6 +410,7 @@ if __name__ == '__main__':
               '\t--help, -h\n'
               '\t--og_model\n'
               '\t--tt_model\n'
+              '\t--dp_model\n'
               '\t--vanilla\n'
               '\t--average\n'
               '\t--bb\n'
@@ -335,6 +420,7 @@ if __name__ == '__main__':
     # Save selected options
     options = {'og_model': False,
                'tt_model': False,
+               'dp_model': False,
                'vanilla': False,
                'average': False,
                'bb': False,
@@ -346,6 +432,7 @@ if __name__ == '__main__':
                   '\t--help, -h\n'
                   '\t--og_model\n'
                   '\t--tt_model\n'
+                  '\t--dp_model\n'
                   '\t--vanilla\n'
                   '\t--average\n'
                   '\t--bb\n'
@@ -355,6 +442,8 @@ if __name__ == '__main__':
             options['og_model'] = True
         elif opt == '--tt_model':
             options['tt_model'] = True
+        elif opt == '--dp_model':
+            options['dp_model'] = True
         elif opt == '--vanilla':
             options['vanilla'] = True
         elif opt == '--average':
@@ -365,11 +454,11 @@ if __name__ == '__main__':
             options['wb'] = True
     
     # Check if selected options are compatible
-    if options['og_model'] and options['tt_model']:
-        print('Options "og_model" and "tt_model" are incompatible')
+    if options['og_model'] and options['tt_model'] and options['dp_model']:
+        print('Options "og_model", and "tt_model" and "dp_model" are incompatible')
         sys.exit()
-    elif not (options['og_model'] or options['tt_model']):
-        print('One of the options "og_model" and "tt_model" should be chosen')
+    elif not (options['og_model'] or options['tt_model'] or options['dp_model']):
+        print('One of the options "og_model", "tt_model" and "dp_model" should be chosen')
         sys.exit()
     
     if options['vanilla'] and options['average']:
@@ -386,22 +475,32 @@ if __name__ == '__main__':
         print('One of the options "bb" and "wb" should be chosen')
         sys.exit()
     
+    if options['og_model']:
+        og_model = ''
+    elif options['tt_model']:
+        og_model = '_tt'
+    elif options['dp_model']:
+        og_model = '_dp'
     
     model_name = 'llr6' # 'llr6' or 'nn2'
-    og_model = options['og_model']
     scaler_type = 'standard'
     model_type = 'vanilla' if options['vanilla'] else 'average'
     attack_type = 'bb' if options['bb'] else 'wb'
     
     print('\n* Creating datasets...')
-    if og_model:
+    if options['og_model']:
         all_labels, all_params, all_bal_accs, all_auc_scores = \
             create_datasets_og(model_name=model_name,
                                scaler_type=scaler_type,
                                model_type=model_type)
-    else:
+    elif options['tt_model']:
         all_labels, all_params, all_bal_accs, all_auc_scores = \
             create_datasets_tt(model_name=model_name,
+                               scaler_type=scaler_type,
+                               model_type=model_type)
+    elif options['dp_model']:
+        all_labels, all_params, all_bal_accs, all_auc_scores = \
+            create_datasets_dp(model_name=model_name,
                                scaler_type=scaler_type,
                                model_type=model_type)
     
