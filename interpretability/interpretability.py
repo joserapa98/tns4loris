@@ -9,12 +9,14 @@ from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.metrics import accuracy_score, balanced_accuracy_score
 
 import pandas as pd
+import numpy as np
 
 import torch
 import tensorkrowch as tk
 from tensorkrowch.decompositions import tt_rss
 
 cwd = os.getcwd()
+
 
 
 def all_combinations(lst):
@@ -65,7 +67,7 @@ def create_model(model_name):
 
 
 def load_data(featuresNA, phenoNA, dataset, scaler_type):
-    data_dir = os.path.join(cwd, '..', '02.Input')
+    data_dir = os.path.join(cwd,'loris/02.Input')
     data_file = os.path.join(data_dir, 'AllData.xlsx')
 
     # Data truncation
@@ -367,7 +369,7 @@ def get_distribution(mps, cond_features, cond_data, marg_features,
 
 
 if __name__ == '__main__':
-    cwd = os.path.join(cwd, 'code')
+    # cwd = os.path.join(cwd, 'loris/code')
 
     # "model_name" should be 'llr6' or 'nn2'
     model_name = 'llr6'
@@ -470,7 +472,8 @@ if __name__ == '__main__':
 
     #-------------------------------------------------------------
     #****Create Scalars for each variable******
-    data_file = os.path.join(input_dir, 'AllData.xlsx')
+    data_dir = os.path.join(cwd,'loris/02.Input')
+    data_file = os.path.join(data_dir, 'AllData.xlsx')
     # Data truncation
     TMB_upper = 50
     Age_upper = 85
