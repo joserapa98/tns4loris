@@ -476,7 +476,9 @@ if __name__ == '__main__':
                            y_test=yt_test)
     
 
+    datasets = ['Chowell_test', 'MSK1', 'MSK2']
     all_data = []
+
 
     for dataset in datasets:
         df = load_data(featuresNA, phenoNA, dataset, scaler_type)
@@ -529,11 +531,9 @@ if __name__ == '__main__':
 
     # Reorder columns to match: SAMPLE_ID, y, y_pred
     predictions_df = predictions_df[['y', 'y_pred']]
-    print(predictions_df.head())
-    print(len(predictions_df))
 
 #-----------Now Create Plot--------------------
-    def loris_vs_response_curve(df, bin_size=0.1, bs_number=1000, cohort_label='Cohort'):
+    def loris_vs_response_curve(df, bin_size=0.1, bs_number=1000, Plot_type=None):
         y_true = df['y'].to_numpy()
         y_pred = df['y_pred'].to_numpy()
         sampleNUM = len(y_true)
@@ -570,31 +570,30 @@ if __name__ == '__main__':
         ORR_05 = [np.quantile(x, 0.05) for x in ORR_list]
         ORR_95 = [np.quantile(x, 0.95) for x in ORR_list]
 
+
         # Plot
         fig, ax = plt.subplots(figsize=(3.5, 3))
         ax.plot(score_list, ORR_mean, '-', color='r', label='Mean')
         ax.fill_between(score_list, ORR_05, ORR_95, color='r', alpha=0.25)
+
+        # Add shading
+        ax.axvspan(0, 0.275, facecolor='grey', alpha=0.2)   # Grey left region
+        ax.axvspan(0.7, 1.0, facecolor='green', alpha=0.2)  # Green right region
+
         ax.set_ylabel("Response probability (%)")
-        ax.set_xlabel("LORIS score")
+        ax.set_xlabel("TT score")
         ax.set_ylim([-0.02, 1.02])
         ax.set_yticks([0, 0.25, 0.5, 0.75, 1])
         ax.set_yticklabels([0, 25, 50, 75, 100])
         ax.set_xlim([0, 1])
         ax.set_xticks([0, 0.2, 0.4, 0.6, 0.8, 1])
-        ax.set_title(cohort_label)
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
+
+
         plt.tight_layout()
         plt.show()
 
-        # Return source data if needed
-        return pd.DataFrame({
-            'LORIS_score': score_list,
-            'Prob_mean': ORR_mean,
-            'Prob_lower': ORR_05,
-            'Prob_upper': ORR_95
-        })
-
-    curve_data = loris_vs_response_curve(predictions_df, cohort_label="PanCancer_all")
+    curve_data = loris_vs_response_curve(predictions_df)
 
     
