@@ -175,14 +175,20 @@ cython_debug/
 
 privacy/models/*
 privacy/tt_models/*
+privacy/dp_models/*
 privacy/datasets/*
 privacy/tt_datasets/*
+privacy/dp_datasets/*
 privacy/attack_models/*
 privacy/attack_tt_models/*
+privacy/attack_dp_models/*
 
 privacy/models_old/*
 privacy/tt_models_old/*
+privacy/dp_models_old/*
 privacy/datasets_old/*
 privacy/tt_datasets_old/*
+privacy/dp_datasets_old/*
 privacy/attack_models_old/*
 privacy/attack_tt_models_old/*
+privacy/attack_dp_models_old/*
