@@ -236,19 +236,26 @@ def create_datasets_dp(model_name, scaler_type, model_type):
                                 model_name, scaler_type, model_type)
     os.makedirs(datasets_dir, exist_ok=True)
     
-    data_dir = os.path.join(datasets_dir, 'params_multilabel.pt')
-    if not os.path.exists(data_dir):
-        models_dir = os.path.join(cwd, 'privacy', 'dp_models',
-                                  model_name, scaler_type, model_type)
-        
-        for comb in os.listdir(models_dir):
-            print(comb)
-            aux_labels = [int(n) - 1 for n in comb.split('_')]
-            one_hot_label = torch.zeros(len(datasets))
-            one_hot_label[aux_labels] = 1
+    epsilon_list = [0.01, 0.1, 1.0, 10.0, 100.0, float('inf')]
+    for epsilon in epsilon_list:
+        data_dir = os.path.join(datasets_dir, f'params_multilabel_{epsilon}.pt')
+        if not os.path.exists(data_dir):
+            models_dir = os.path.join(cwd, 'privacy', 'dp_models',
+                                      model_name, scaler_type, model_type)
             
-            comb_dir = os.path.join(models_dir, comb)
-            for epsilon in [0.001, 0.1, 1.0, 10.0, 100.0]:
+            # Create whole models dataset, for each epsilon
+            all_labels_eps = []
+            all_params_eps = []
+            all_bal_accs_eps = []
+            all_auc_scores_eps = []
+            
+            for comb in os.listdir(models_dir):
+                print(epsilon, comb)
+                aux_labels = [int(n) - 1 for n in comb.split('_')]
+                one_hot_label = torch.zeros(len(datasets))
+                one_hot_label[aux_labels] = 1
+                
+                comb_dir = os.path.join(models_dir, comb)
                 for i in range(100):
                     params_file = f'{epsilon}_{i}_params.pkl'
                     bal_accs_file = f'{epsilon}_{i}_bal_accs.json'
@@ -257,12 +264,12 @@ def create_datasets_dp(model_name, scaler_type, model_type):
                     # params
                     params_dir = os.path.join(comb_dir, params_file)
                     if not os.path.exists(params_dir):
-                            continue
+                        continue
                     
                     params = joblib.load(params_dir)
                         
-                    all_labels.append(one_hot_label.clone())
-                    all_params.append(params.clone())
+                    all_labels_eps.append(one_hot_label.clone())
+                    all_params_eps.append(params.clone())
                     
                     # bal accs
                     bal_accs_dir = os.path.join(comb_dir, bal_accs_file)
@@ -274,7 +281,7 @@ def create_datasets_dp(model_name, scaler_type, model_type):
                         bal_accs_vector[dat_id - 1] = bal_accs_dict[str(dat_id)]
                     bal_accs_vector[-1] = bal_accs_dict['all']
                     
-                    all_bal_accs.append(bal_accs_vector)
+                    all_bal_accs_eps.append(bal_accs_vector)
                     
                     # auc scores
                     auc_scores_dir = os.path.join(comb_dir, auc_scores_file)
@@ -286,19 +293,25 @@ def create_datasets_dp(model_name, scaler_type, model_type):
                         auc_scores_vector[dat_id - 1] = auc_scores_dict[str(dat_id)]
                     auc_scores_vector[-1] = auc_scores_dict['all']
                     
-                    all_auc_scores.append(auc_scores_vector)
+                    all_auc_scores_eps.append(auc_scores_vector)
 
-        all_labels = torch.stack(all_labels, dim=0).int()
-        all_params = torch.stack(all_params, dim=0)
-        all_bal_accs = torch.stack(all_bal_accs, dim=0)
-        all_auc_scores = torch.stack(all_auc_scores, dim=0)
+            all_labels_eps = torch.stack(all_labels_eps, dim=0).int()
+            all_params_eps = torch.stack(all_params_eps, dim=0)
+            all_bal_accs_eps = torch.stack(all_bal_accs_eps, dim=0)
+            all_auc_scores_eps = torch.stack(all_auc_scores_eps, dim=0)
 
-        torch.save((all_labels, all_params, all_bal_accs, all_auc_scores),
-                   data_dir)
+            torch.save((all_labels_eps, all_params_eps,
+                        all_bal_accs_eps, all_auc_scores_eps),
+                        data_dir)
     
-    else:
-        all_labels, all_params, all_bal_accs, all_auc_scores = \
-            torch.load(data_dir, weights_only=True)
+        else:
+            all_labels_eps, all_params_eps, all_bal_accs_eps, all_auc_scores_eps = \
+                torch.load(data_dir, weights_only=True)
+        
+        all_labels.append(all_labels_eps)
+        all_params.append(all_params_eps)
+        all_bal_accs.append(all_bal_accs_eps)
+        all_auc_scores.append(all_auc_scores_eps)
     
     return all_labels, all_params, all_bal_accs, all_auc_scores
 
@@ -336,6 +349,46 @@ def bb_attack(og_model, all_scores, all_labels, model_name, scaler_type,
     joblib.dump(mlp_bb,
                 os.path.join(attack_model_dir,
                              f'mlp_attacker_multilabel_bb_{attack_name}.pkl'))
+
+
+def bb_attack_dp(all_scores, all_labels, model_name, scaler_type, model_type,
+                 attack_name):
+    epsilon_list = [0.01, 0.1, 1.0, 10.0, 100.0, float('inf')]
+    for eps_id, epsilon in enumerate(epsilon_list):
+        print(epsilon)
+        X, y = all_scores[eps_id], all_labels[eps_id]
+        
+        aux_dir = f'attack_dp_models'
+        attack_model_dir = os.path.join(cwd, 'privacy', aux_dir,
+                                        model_name, scaler_type, model_type)
+        os.makedirs(attack_model_dir, exist_ok=True)
+
+        # Train/Test Split (held-out test set)
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.2, random_state=42)
+
+        # Save held-out test set (optional)
+        joblib.dump((X_test, y_test),
+                    os.path.join(
+                        attack_model_dir,
+                        f'heldout_test_set_bb_{attack_name}_{epsilon}.pkl'))
+        
+        # Define and train the MLP model
+        # mlp_bb = MLPClassifier(hidden_layer_sizes=(256, 128, 64, 32),
+        #                        activation='relu',
+        #                        solver='adam',
+        #                        max_iter=1000)
+        mlp_bb = MLPClassifier(hidden_layer_sizes=(128, 32),
+                            activation='relu',
+                            solver='adam',
+                            max_iter=100)
+        mlp_bb.fit(X_train, y_train)
+
+        # Save model
+        joblib.dump(mlp_bb,
+                    os.path.join(
+                        attack_model_dir,
+                        f'mlp_attacker_multilabel_bb_{attack_name}_{epsilon}.pkl'))
 
 
 def wb_attack(og_model, all_params, all_labels, model_name, scaler_type,
@@ -381,6 +434,55 @@ def wb_attack(og_model, all_params, all_labels, model_name, scaler_type,
         joblib.dump(mlp_wb,
                     os.path.join(attack_model_dir,
                                  f'mlp_attacker_multilabel_wb_fold_{fold+1}.pkl'))
+
+
+def wb_attack_dp(all_params, all_labels, model_name, scaler_type, model_type):
+    epsilon_list = [0.01, 0.1, 1.0, 10.0, 100.0, float('inf')]
+    for eps_id, epsilon in enumerate(epsilon_list):
+        print(epsilon)
+        X, y = all_params[eps_id], all_labels[eps_id]
+        
+        aux_dir = 'attack_dp_models'
+        attack_model_dir = os.path.join(cwd, 'privacy', aux_dir,
+                                        model_name, scaler_type, model_type)
+        os.makedirs(attack_model_dir, exist_ok=True)
+
+        # First: Train/Test Split (held-out test set)
+        X_train_all, X_test, y_train_all, y_test = train_test_split(
+            X, y, test_size=0.2, random_state=42)
+
+        # Save held-out test set (optional)
+        joblib.dump((X_test, y_test),
+                    os.path.join(attack_model_dir,
+                                 f'heldout_test_set_wb_{epsilon}.pkl'))
+
+        # K-Fold CV on training set
+        n_splits = 5
+        kfold = KFold(n_splits=n_splits, shuffle=True, random_state=42)
+
+        for fold, (train_index, _) in enumerate(kfold.split(X_train_all,
+                                                            y_train_all)):
+            print(f'Training fold {fold+1}/{n_splits}...')
+
+            X_train = X_train_all[train_index]
+            y_train = y_train_all[train_index]
+
+            # Define and train the model
+            # mlp_wb = MLPClassifier(hidden_layer_sizes=(256, 128, 64, 32),
+            #                        activation='relu',
+            #                        solver='adam',
+            #                        max_iter=500)
+            mlp_wb = MLPClassifier(hidden_layer_sizes=(128, 32),
+                                   activation='relu',
+                                   solver='adam',
+                                   max_iter=100)
+            mlp_wb.fit(X_train, y_train)
+
+            # Save model for this fold
+            joblib.dump(mlp_wb,
+                        os.path.join(
+                            attack_model_dir,
+                            f'mlp_attacker_multilabel_wb_fold_{fold+1}_{epsilon}.pkl'))
 
 
 if __name__ == '__main__':
@@ -504,37 +606,59 @@ if __name__ == '__main__':
                                scaler_type=scaler_type,
                                model_type=model_type)
     
-    # Remove models with low accuracies
-    lower_bound = 0.64
+    if not options['dp_model']:
+        # Remove models with low accuracies
+        lower_bound = 0.64
 
-    # idx = (all_bal_accs >= lower_bound).all(dim=1)
-    idx = (all_bal_accs[:, -1] >= lower_bound)
+        # idx = (all_bal_accs >= lower_bound).all(dim=1)
+        idx = (all_bal_accs[:, -1] >= lower_bound)
 
-    all_labels = all_labels[idx]
-    all_params = all_params[idx]
-    all_bal_accs = all_bal_accs[idx]
-    all_auc_scores = all_auc_scores[idx]
+        all_labels = all_labels[idx]
+        all_params = all_params[idx]
+        all_bal_accs = all_bal_accs[idx]
+        all_auc_scores = all_auc_scores[idx]
     
     print('\n* Performing attacks...')
     if attack_type == 'bb':
-        bb_attack(og_model=og_model,
-                  all_scores=all_bal_accs,
-                  all_labels=all_labels,
-                  model_name=model_name,
-                  scaler_type=scaler_type,
-                  model_type=model_type,
-                  attack_name='weak')
-        bb_attack(og_model=og_model,
-                  all_scores=all_auc_scores,
-                  all_labels=all_labels,
-                  model_name=model_name,
-                  scaler_type=scaler_type,
-                  model_type=model_type,
-                  attack_name='strong')
+        if options['dp_model']:
+            bb_attack_dp(all_scores=all_bal_accs,
+                         all_labels=all_labels,
+                         model_name=model_name,
+                         scaler_type=scaler_type,
+                         model_type=model_type,
+                         attack_name='weak')
+            bb_attack_dp(all_scores=all_auc_scores,
+                         all_labels=all_labels,
+                         model_name=model_name,
+                         scaler_type=scaler_type,
+                         model_type=model_type,
+                         attack_name='strong')
+        else:
+            bb_attack(og_model=og_model,
+                      all_scores=all_bal_accs,
+                      all_labels=all_labels,
+                      model_name=model_name,
+                      scaler_type=scaler_type,
+                      model_type=model_type,
+                      attack_name='weak')
+            bb_attack(og_model=og_model,
+                      all_scores=all_auc_scores,
+                      all_labels=all_labels,
+                      model_name=model_name,
+                      scaler_type=scaler_type,
+                      model_type=model_type,
+                      attack_name='strong')
     else:
-        wb_attack(og_model=og_model,
-                  all_params=all_params,
-                  all_labels=all_labels,
-                  model_name=model_name,
-                  scaler_type=scaler_type,
-                  model_type=model_type)
+        if options['dp_model']:
+            wb_attack_dp(all_params=all_params,
+                         all_labels=all_labels,
+                         model_name=model_name,
+                         scaler_type=scaler_type,
+                         model_type=model_type)
+        else:
+            wb_attack(og_model=og_model,
+                      all_params=all_params,
+                      all_labels=all_labels,
+                      model_name=model_name,
+                      scaler_type=scaler_type,
+                      model_type=model_type)
