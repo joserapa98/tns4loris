@@ -606,7 +606,20 @@ if __name__ == '__main__':
                                scaler_type=scaler_type,
                                model_type=model_type)
     
-    if not options['dp_model']:
+    if options['dp_model']:
+        # Remove models with low accuracies
+        lower_bound = 0.5
+        
+        epsilon_list = [0.01, 0.1, 1.0, 10.0, 100.0, float('inf')]
+        for i in range(len(epsilon_list)):
+            # idx = (all_bal_accs[i] > lower_bound).all(dim=1)
+            idx = (all_bal_accs[i][:, -1] > lower_bound)
+
+            all_labels[i] = all_labels[i][idx]
+            all_params[i] = all_params[i][idx]
+            all_bal_accs[i] = all_bal_accs[i][idx]
+            all_auc_scores[i] = all_auc_scores[i][idx]
+    else:
         # Remove models with low accuracies
         lower_bound = 0.64
 
