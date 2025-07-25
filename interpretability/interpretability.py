@@ -14,11 +14,12 @@ import numpy as np
 import torch
 import tensorkrowch as tk
 from tensorkrowch.decompositions import tt_rss
+import matplotlib.pyplot as plt
 
 cwd = os.getcwd()
 
 
-
+#---------------------Efficient Computations--------------------
 def all_combinations(lst):
     return list(chain.from_iterable(combinations(lst, r)
                                     for r in range(1, len(lst) + 1)))
@@ -367,6 +368,262 @@ def get_distribution(mps, cond_features, cond_data, marg_features,
     
     return distr, marg_features_order
 
+#----------------Helper Functions: Get Scaled Patients and Average Feature Values--------------------------------
+#Create scalars for each variable
+data_dir = os.path.join(cwd,'loris/02.Input')
+data_file = os.path.join(data_dir, 'AllData.xlsx')
+# Data truncation
+TMB_upper = 50
+Age_upper = 85
+NLR_upper = 25
+featuresNA = ['TMB', 'Albumin', 'NLR', 'Age', 'Systemic_therapy_history',
+                'CancerType1', 'CancerType2', 'CancerType3', 'CancerType4',
+                'CancerType5', 'CancerType6', 'CancerType7', 'CancerType8',
+                'CancerType9', 'CancerType10', 'CancerType11', 'CancerType12',
+                'CancerType13', 'CancerType14', 'CancerType15', 'CancerType16']
+nonbinary=['TMB', 'Albumin', 'NLR', 'Age']
+phenoNA = 'Response'
+data = pd.read_excel(data_file, sheet_name='Chowell_train', index_col=0)
+
+# Data truncation
+data['TMB'] = [c if c < TMB_upper else TMB_upper for c in data['TMB']]
+data['Age'] = [c if c < Age_upper else Age_upper for c in data['Age']]
+data['NLR'] = [c if c < NLR_upper else NLR_upper for c in data['NLR']]
+all_features = featuresNA + [phenoNA]
+data_no_nans = data[all_features].dropna(axis=0)
+
+minmax_fit_scalers = {}
+standard_fit_scalers = {}
+for feature in nonbinary:
+    scaler_minmax = MinMaxScaler()
+    scaler_standard=StandardScaler()
+    scaler_minmax.fit(data_no_nans[[feature]])
+    scaler_standard.fit(data_no_nans[[feature]])
+    minmax_fit_scalers[feature] = scaler_minmax
+    standard_fit_scalers[feature]=scaler_standard
+
+
+def scale_input(patient,cond_features,scaler='MinMax'):
+    '''Takes in a list of features adn their names and scales each one using MinMax scaler fit to Chowell train data'''
+    patient_df= pd.DataFrame([patient], columns=cond_features)
+    
+    if scaler=='MinMax':
+        fit_scalers=minmax_fit_scalers
+    elif scaler=='StandardScaler':
+        fit_scalers=standard_fit_scalers
+    for feature in patient_df.columns:
+        if feature in fit_scalers:
+            patient_df[feature] = fit_scalers[feature].transform(patient_df[[feature]])
+    patient_list=patient_df.iloc[0].tolist()
+    return patient_list
+
+#Compute Average of Numeric Features
+mean_TMB=([np.mean(data_no_nans['TMB'])],['TMB'])[0][0]
+mean_Albumin=([np.mean(data_no_nans['Albumin'])],['Albumin'])[0][0]
+mean_NLR=([np.mean(data_no_nans['NLR'])],['NLR'])[0][0]
+mean_Age=([np.mean(data_no_nans['Age'])],['Age'])[0][0]
+
+print(f'Mean numeric features(TMB, Albumin,NLR, Age) are:{mean_TMB,mean_Albumin,mean_NLR,mean_Age}')
+
+#Find most common cancer variable
+cancer_variables=['CancerType1', 'CancerType2', 'CancerType3', 'CancerType4',
+                'CancerType5', 'CancerType6', 'CancerType7', 'CancerType8',
+                'CancerType9', 'CancerType10', 'CancerType11', 'CancerType12',
+                'CancerType13', 'CancerType14', 'CancerType15', 'CancerType16']
+freq=0
+for v in cancer_variables:
+    sum=np.sum(data_no_nans[v])
+    if sum>freq:
+        most_common=v
+        freq=sum
+print('The most common cancer type is',most_common)
+#most common type in Cancer Type 11
+
+#Find most common PSTH value
+psth_1=np.sum(data_no_nans['Systemic_therapy_history'])
+psth_0=len(data_no_nans['Systemic_therapy_history']) - np.sum(data_no_nans['Systemic_therapy_history'])
+if psth_1>psth_0:
+    most_common=1
+elif psth_1<psth_0:
+    most_common=0
+print(f'The most common PSTH value is {most_common}')
+
+
+#--------------------LORIS Equivalent Computations---------------------------
+# def loris_unscaled(TMB=mean_TMB,Albumin=mean_Albumin,NLR=mean_NLR,Age=mean_Age,PSTH=1,
+#                    CancerType1=0,CancerType2=0,CancerType3=0,CancerType4=0,CancerType5=0,CancerType6=0,CancerType7=0,CancerType8=0,
+#                    CancerType9=0,CancerType10=0,CancerType11=1,CancerType12=0,CancerType13=0,CancerType14=0,CancerType15=0,CancerType16=0):
+#     mean_patient=[mean_TMB,mean_Albumin,mean_NLR,mean_Age,1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0]
+
+    
+#     CTCT= -0.3323 *CancerType1+0.3323*CancerType2-0.102*CancerType3-0.0079*CancerType4+0.55*CancerType5+0.2306*CancerType6+0.0678*CancerType7
+#     -0.1189*CancerType8-0.0086*CancerType9+0.1255*CancerType10+0.0008*CancerType11-0.052*CancerType12-1.1169*CancerType13+0.5451*CancerType14+0.0542*CancerType15
+#     -0.0033*CancerType16
+#     S = (0.0371 * TMB
+#         - 0.8775 * PSTH
+#         + 0.5382 * Albumin
+#         - 0.033 * NLR
+#         + 0.0049 * Age
+#         + CTCT
+#         - 2.0886
+#     )
+#     score=(1/(1+np.e**(-S)))
+#     return score
+
+import numpy as np
+
+def loris_scaled(x):
+    (
+        TMB, Albumin, NLR, Age, PSTH,
+        CancerType1, CancerType2, CancerType3, CancerType4, CancerType5,
+        CancerType6, CancerType7, CancerType8, CancerType9, CancerType10,
+        CancerType11, CancerType12, CancerType13, CancerType14, CancerType15,
+        CancerType16
+    ) = x
+
+    CTCT = (
+        -0.0833 * CancerType1 + 0.0367 * CancerType2 - 0.0171 * CancerType3
+        - 0.0013 * CancerType4 + 0.0856 * CancerType5 + 0.0475 * CancerType6
+        + 0.0147 * CancerType7 - 0.0225 * CancerType8 - 0.0031 * CancerType9
+        + 0.0178 * CancerType10 + 0.0004 * CancerType11 - 0.0079 * CancerType12
+        - 0.1378 * CancerType13 + 0.1442 * CancerType14 + 0.0099 * CancerType15
+        - 0.0006 * CancerType16
+    )
+    
+    S = (
+        0.419 * TMB
+        - 0.4141 * PSTH
+        + 0.246 * Albumin
+        - 0.1592 * NLR
+        + 0.0537 * Age
+        + CTCT
+        - 0.1312
+    )
+
+    score = 1 / (1 + np.exp(-S))
+    return score
+
+
+#------------------Feature Sensitivity------------------------------------
+def feature_sensitivity(feature,model):
+    '''This function marginalizes on all variables, setting them 
+    to the mean value for each feature. The feature of interest is perturbed
+    between 0 and 1'''
+    
+    cond_features = ['TMB', 'Albumin', 'NLR', 'Age', 'Systemic_therapy_history',
+                'CancerType1', 'CancerType2', 'CancerType3', 'CancerType4',
+                'CancerType5', 'CancerType6', 'CancerType7', 'CancerType8',
+                'CancerType9', 'CancerType10', 'CancerType11', 'CancerType12',
+                'CancerType13', 'CancerType14', 'CancerType15', 'CancerType16']
+    marg_features = ['Response']
+    discr_steps = int(1e5)
+    xvals = np.linspace(0.0, 1.0, 500)
+    yvals = []
+    base_data = [mean_TMB, mean_Albumin, mean_NLR, mean_Age,1] + [0] * (len(cond_features) - 5)
+    cond_data = base_data.copy()
+
+    if feature == 'Cancer_Type':
+        for i in range(6, len(base_data)):
+            cond_data[i] = 1  # set 1 at the current position (others remain 0 from index 5 onward)
+
+            if model == 'TT':
+
+                cond_data_scaled=scale_input(cond_data,cond_features,"MinMax")
+                score = get_distribution(
+                    mps=tn_model,
+                    cond_features=cond_features,
+                    cond_data=cond_data_scaled,
+                    marg_features=marg_features,
+                    in_features=featuresNA,
+                    out_feature=phenoNA,
+                    num_features=numeric_featuresNA,
+                    n_classes=n_classes,
+                    phys_dim=phys_dim,
+                    discr_steps=discr_steps
+                )[0][1]
+
+            elif model == 'LORIS':
+                cond_data_scaled=scale_input(cond_data,cond_features,'StandardScaler')
+                score = loris_scaled(cond_data_scaled)
+
+            yvals.append(score)
+
+    else:
+        if model=='TT':
+            cond_data_scaled=scale_input(cond_data,cond_features,'MinMax')
+            
+        elif model=='LORIS':
+            cond_data_scaled=scale_input(cond_data,cond_features,'StandardScaler')
+
+        for j in xvals:
+            if feature=='TMB':
+                cond_data_scaled[0]=j
+            elif feature=='Albumin':
+                cond_data_scaled[1]=j
+            elif feature=='NLR':
+                cond_data_scaled[2]=j
+            elif feature=='Age':
+                cond_data_scaled[3]=j
+            elif feature=='Systemic_therapy_history':
+                cond_data_scaled[4]=j
+
+            if model=='TT':
+                
+                score = get_distribution(
+                    mps=tn_model,
+                    cond_features=cond_features,
+                    cond_data=cond_data_scaled,
+                    marg_features=marg_features,
+                    in_features=featuresNA,
+                    out_feature=phenoNA,
+                    num_features=numeric_featuresNA,
+                    n_classes=n_classes,
+                    phys_dim=phys_dim,
+                    discr_steps=discr_steps
+                )[0][1]
+            elif model=='LORIS':
+                score=loris_scaled(cond_data_scaled)
+            
+            yvals.append(score)
+
+    return(yvals[-1]-yvals[0])
+
+def sensitivity_bar_plot():
+    # Features and sensitivity scores
+    features = ['TMB', 'Albumin', 'NLR', 'Age', 'Systemic_therapy_history', 'Cancer_Type']
+    tt_scores = []
+    loris_scores = []
+
+    # Collect sensitivity scores
+    for feature in features:
+        tt_score = feature_sensitivity(feature, 'TT')
+        loris_score = feature_sensitivity(feature, 'LORIS')
+        tt_scores.append(tt_score)
+        loris_scores.append(loris_score)
+
+    # Bar plot setup
+
+    x = np.arange(len(features))  # label locations
+    width = 0.35  # width of the bars
+
+    # Replace label just for plotting
+    plot_labels = ['PSTH' if f == 'Systemic_therapy_history' else f for f in features]
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    bars1 = ax.bar(x - width/2, tt_scores, width, label='TT', color='skyblue', edgecolor='black')
+    bars2 = ax.bar(x + width/2, loris_scores, width, label='LORIS', color='salmon', edgecolor='black')
+
+    # Axes settings
+    ax.set_xlabel('Feature')
+    ax.set_ylabel('Sensitivity Score')
+    ax.set_title('Feature Sensitivity')
+    ax.set_xticks(x)
+    ax.set_xticklabels(plot_labels)
+    ax.legend()
+    plt.tight_layout()
+    plt.show()
+
+
 
 if __name__ == '__main__':
     # cwd = os.path.join(cwd, 'loris/code')
@@ -470,333 +727,58 @@ if __name__ == '__main__':
                            x_test=xt_test,
                            y_test=yt_test)
 
-    #-------------------------------------------------------------
-    #****Create Scalars for each variable******
-    data_dir = os.path.join(cwd,'loris/02.Input')
-    data_file = os.path.join(data_dir, 'AllData.xlsx')
-    # Data truncation
-    TMB_upper = 50
-    Age_upper = 85
-    NLR_upper = 25
-    featuresNA = ['TMB', 'Albumin', 'NLR', 'Age', 'Systemic_therapy_history',
-                    'CancerType1', 'CancerType2', 'CancerType3', 'CancerType4',
-                    'CancerType5', 'CancerType6', 'CancerType7', 'CancerType8',
-                    'CancerType9', 'CancerType10', 'CancerType11', 'CancerType12',
-                    'CancerType13', 'CancerType14', 'CancerType15', 'CancerType16']
-    nonbinary=['TMB', 'Albumin', 'NLR', 'Age']
-    phenoNA = 'Response'
-    data = pd.read_excel(data_file, sheet_name='Chowell_train', index_col=0)
+    #--------------Section 3.3: Efficeint Compuation Examples-------------------------
 
-    # Data truncation
-    data['TMB'] = [c if c < TMB_upper else TMB_upper for c in data['TMB']]
-    data['Age'] = [c if c < Age_upper else Age_upper for c in data['Age']]
-    data['NLR'] = [c if c < NLR_upper else NLR_upper for c in data['NLR']]
-    all_features = featuresNA + [phenoNA]
-    data_no_nans = data[all_features].dropna(axis=0)
-
-    fit_scalers = {}
-    for feature in nonbinary:
-        scaler = MinMaxScaler()
-        scaler.fit(data_no_nans[[feature]])
-        fit_scalers[feature] = scaler
-
-    def scale_input(patient,cond_features):
-        '''Takes in a list of features adn their names and scales each one using MinMax scaler fit to Chowell train data'''
-        patient_df= pd.DataFrame([patient], columns=cond_features)
-        
-        for feature in patient_df.columns:
-            if feature in fit_scalers:
-                patient_df[feature] = fit_scalers[feature].transform(patient_df[[feature]])
-        patient_list=patient_df.iloc[0].tolist()
-        return patient_list
-
-
-    mean_TMB=scale_input([np.mean(data_no_nans['TMB'])],['TMB'])[0]
-    mean_Albumin=scale_input([np.mean(data_no_nans['Albumin'])],['Albumin'])[0]
-    mean_NLR=scale_input([np.mean(data_no_nans['NLR'])],['NLR'])[0]
-    mean_Age=scale_input([np.mean(data_no_nans['Age'])],['Age'])[0]
-    print(mean_TMB,mean_Albumin,mean_NLR,mean_Age)
-
-    #find most common cancer variable
-    cancer_variables=['CancerType1', 'CancerType2', 'CancerType3', 'CancerType4',
-                  'CancerType5', 'CancerType6', 'CancerType7', 'CancerType8',
-                  'CancerType9', 'CancerType10', 'CancerType11', 'CancerType12',
-                  'CancerType13', 'CancerType14', 'CancerType15', 'CancerType16']
-    freq=0
-    for v in cancer_variables:
-        sum=np.sum(data_no_nans[v])
-        if sum>freq:
-            most_common=v
-            freq=sum
-    print('The most common cancer type is',most_common)
-    #most common type in Cancer Type 11
-
-    print('The number of patients with PSTH=1:', np.sum(data_no_nans['Systemic_therapy_history']))
-    print('The number of patients with PSTH=0:', len(data_no_nans['Systemic_therapy_history']) - np.sum(data_no_nans['Systemic_therapy_history']))
-    #most patient have had PSTH
-
-
-    def feature_sensitivity(feature):
-        '''This function marginalizes on all variables, setting them 
-        to the mean value for each feature. The feature of interest is perturbed
-        between 0 and 1'''
-        
-        cond_features = ['TMB', 'Albumin', 'NLR', 'Age', 'Systemic_therapy_history',
-                  'CancerType1', 'CancerType2', 'CancerType3', 'CancerType4',
-                  'CancerType5', 'CancerType6', 'CancerType7', 'CancerType8',
-                  'CancerType9', 'CancerType10', 'CancerType11', 'CancerType12',
-                  'CancerType13', 'CancerType14', 'CancerType15', 'CancerType16']
+    def marginal_prediction(cond_data,cond_features):
+        cond_data_scaled_tt=scale_input(cond_data,cond_features,'MinMax')
         marg_features = ['Response']
+
         discr_steps = int(1e5)
-        xvals = np.linspace(0.0, 1.0, 500)
-        yvals = []
 
-        for j in xvals:
-            if feature=='TMB':
-                cond_data=[j,mean_Albumin,mean_NLR,mean_Age,1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0]
-            elif feature=='Albumin':
-                cond_data=[mean_TMB,j,mean_NLR,mean_Age,1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0]
-            elif feature=='NLR':
-                cond_data=[mean_TMB,mean_Albumin,j,mean_Age,1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0]
-            elif feature=='Age':
-                cond_data=[mean_TMB,mean_Albumin,mean_NLR,j,1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0]
+        distr= get_distribution(
+            mps=tn_model,
+            cond_features=cond_features,
+            cond_data=cond_data_scaled_tt,
+            marg_features=marg_features,
+            in_features=featuresNA,
+            out_feature=phenoNA,
+            num_features=numeric_featuresNA,
+            n_classes=n_classes,
+            phys_dim=phys_dim,
+            discr_steps=discr_steps
+        )[0][1]
 
-            distr = get_distribution(
-                mps=tn_model,
-                cond_features=cond_features,
-                cond_data=cond_data,
-                marg_features=marg_features,
-                in_features=featuresNA,
-                out_feature=phenoNA,
-                num_features=numeric_featuresNA,
-                n_classes=n_classes,
-                phys_dim=phys_dim,
-                discr_steps=discr_steps
-            )[0]
-            yvals.append(distr[1])
+        return distr
 
-        # Compute min and max
-        y_min = min(yvals)
-        y_max = max(yvals)
+    # TMB: We know TMB above 27 indicates better response
+    # cond_features = ['TMB']
 
-        # Print min and max
-        print(f'Range: {y_min},{y_max}')
+    low=marginal_prediction(10,['TMB'])
+    mid=marginal_prediction(30,['TMB'])
+    high=marginal_prediction(50,['TMB'])
 
-        # Plot
-        plt.plot(xvals, yvals)
-        plt.xlabel(f'{feature} Level')
-        plt.ylabel('Response Probability')
-        plt.title(f'Sensitivity of {feature} Feature')
-        plt.ylim(0, 1)
-        plt.show()
+    print('TMB Example:')
+    print(f'TT Score: {low,mid,high}')
+    print()
 
-    def feature_sensitivity_derivs(feature):
-        '''This function computes the slope of the feature change
-        at every point between 0 and 1, then averages these slopes.'''
-        
-        cond_features = [feature]
-        marg_features = ['Response']
-        discr_steps = int(1e5)
-        xvals = np.linspace(0.0, 1.0, 500)
-        yvals = []
-        delta=0.01
+    # Age: We know Age has a small impact on response
+    low=marginal_prediction(30,['Age'])
+    mid=marginal_prediction(50,['Age'])
+    high=marginal_prediction(80,['Age'])
+    print('Age Example:')
+    # print(marg_feat_order, distr.shape)
+    print(f'TT Score: {low,mid,high}')
+    print()
 
-        for j in xvals:
-
-            #compute the response probability right before this point
-            distr_1= get_distribution(
-                mps=tn_model,
-                cond_features=cond_features,
-                cond_data=[j+delta],
-                marg_features=marg_features,
-                in_features=featuresNA,
-                out_feature=phenoNA,
-                num_features=numeric_featuresNA,
-                n_classes=n_classes,
-                phys_dim=phys_dim,
-                discr_steps=discr_steps
-            )[0][1]
-
-
-            #compute the response probability right after this point
-            distr_2= get_distribution(
-                mps=tn_model,
-                cond_features=cond_features,
-                cond_data=[j-delta],
-                marg_features=marg_features,
-                in_features=featuresNA,
-                out_feature=phenoNA,
-                num_features=numeric_featuresNA,
-                n_classes=n_classes,
-                phys_dim=phys_dim,
-                discr_steps=discr_steps
-            )[0][1]
-            #Store the estiamted slope at each point
-            yvals.append((distr_1-distr_2)/2*delta)
-    
-        #Average the sloped at each point
-        #print(yvals)
-        print(feature)
-        print('The average slope is',np.mean(yvals))
-
-
-    def feature_sensitivity_combination_two(feature1, feature2):
-        '''This function marginalizes on all variables, setting them 
-        to the mean value for each feature. The features of interest are perturbed
-        between 0 and 1, and a heatmap of response sensitivity is plotted.'''
-        
-        cond_features = ['TMB', 'Albumin', 'NLR', 'Age', 'Systemic_therapy_history',
-                        'CancerType1', 'CancerType2', 'CancerType3', 'CancerType4',
-                        'CancerType5', 'CancerType6', 'CancerType7', 'CancerType8',
-                        'CancerType9', 'CancerType10', 'CancerType11', 'CancerType12',
-                        'CancerType13', 'CancerType14', 'CancerType15', 'CancerType16']
-        marg_features = ['Response']
-        discr_steps = int(1e5)
-        xvals = np.linspace(0.0, 1.0, 500)
-        yvals = []
-
-        cond_data = [1, mean_Albumin, mean_NLR, mean_Age, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0]
-
-        for j in xvals:
-            if feature1 == 'TMB':
-                cond_data[0] = j
-            elif feature1 == 'Albumin':
-                cond_data[1] = j
-            elif feature1 == 'NLR':
-                cond_data[2] = j
-            elif feature1 == 'Age':
-                cond_data[3] = j
-
-            for i in xvals:
-                if feature2 == 'TMB':
-                    cond_data[0] = i
-                elif feature2 == 'Albumin':
-                    cond_data[1] = i
-                elif feature2 == 'NLR':
-                    cond_data[2] = i
-                elif feature2 == 'Age':
-                    cond_data[3] = i
-
-                distr = get_distribution(
-                    mps=tn_model,
-                    cond_features=cond_features,
-                    cond_data=cond_data,
-                    marg_features=marg_features,
-                    in_features=featuresNA,
-                    out_feature=phenoNA,
-                    num_features=numeric_featuresNA,
-                    n_classes=n_classes,
-                    phys_dim=phys_dim,
-                    discr_steps=discr_steps
-                )[0]
-                yvals.append(distr[1])
-
-        # Compute min and max
-        y_min = min(yvals)
-        y_max = max(yvals)
-        print(f'Range: {y_min}, {y_max}')
-
-        # Plotting heatmap
-        size = len(xvals)
-        heatmap_vals = np.array(yvals).reshape((size, size))
-
-        plt.figure(figsize=(8, 6))
-        sns.heatmap(
-            heatmap_vals,
-            xticklabels=np.round(xvals, 2),
-            yticklabels=np.round(xvals, 2),
-            cmap="viridis",
-            cbar_kws={'label': 'Response Probability'}
-        )
-        plt.xlabel(feature2)
-        plt.ylabel(feature1)
-        plt.title(f'Sensitivity Heatmap: {feature1} vs {feature2}')
-        plt.tight_layout()
-        plt.show()
-
-
-    def feature_sensitivity_combination_three(feature1, feature2,feature3):
-        '''This function marginalizes on all variables, setting them 
-        to the mean value for each feature. The features of interest is perturbed
-        between 0 and 1'''
-        
-        cond_features = ['TMB', 'Albumin', 'NLR', 'Age', 'Systemic_therapy_history',
-                'CancerType1', 'CancerType2', 'CancerType3', 'CancerType4',
-                'CancerType5', 'CancerType6', 'CancerType7', 'CancerType8',
-                'CancerType9', 'CancerType10', 'CancerType11', 'CancerType12',
-                'CancerType13', 'CancerType14', 'CancerType15', 'CancerType16']
-        marg_features = ['Response']
-        discr_steps = int(1e5)
-        xvals = np.linspace(0.0, 1.0, 500)
-        yvals = []
-
-        cond_data=[mean_TMB,mean_Albumin,mean_NLR,mean_Age,1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0]
-        for j in xvals:
-            if feature1=='TMB':
-                cond_data[0]=j
-            elif feature1=='Albumin':
-                cond_data[1]=j
-            elif feature1=='NLR':
-                cond_data[2]=j
-            elif feature1=='Age':
-                cond_data[3]=j
-
-            for i in xvals:
-                if feature2=='TMB':
-                    cond_data[0]=i
-                elif feature2=='Albumin':
-                    cond_data[1]=i
-                elif feature2=='NLR':
-                    cond_data[2]=i
-                elif feature2=='Age':
-                    cond_data[3]=i
-
-                for k in xvals:
-
-                    if feature3=='TMB':
-                        cond_data[0]=k
-                    elif feature3=='Albumin':
-                        cond_data[1]=k
-                    elif feature3=='NLR':
-                        cond_data[2]=k
-                    elif feature3=='Age':
-                        cond_data[3]=k
-
-                    distr = get_distribution(
-                        mps=tn_model,
-                        cond_features=cond_features,
-                        cond_data=cond_data,
-                        marg_features=marg_features,
-                        in_features=featuresNA,
-                        out_feature=phenoNA,
-                        num_features=numeric_featuresNA,
-                        n_classes=n_classes,
-                        phys_dim=phys_dim,
-                        discr_steps=discr_steps
-                    )[0]
-
-                    yvals.append(distr[1])
-
-        # Compute min and max
-        y_min = min(yvals)
-        y_max = max(yvals)
-
-        print(f'Range: {y_min},{y_max}')
-
-    # Example 5
-    #We know who have had treatment before (1) are less likely to respond
-    # Conditioning on 1: 0.513,0.487
-    #On 0: 0.2928,0.7072
-
+    #PSTH: We know that history of treatemnt lowers effectiveness of treatment
     cond_features = ['Systemic_therapy_history']
-    cond_data = [0]
-    #cond_data=[0]
+    cond_data=[0]
 
     marg_features = ['Response']
 
     discr_steps = int(1e5)
 
-    distr, marg_feat_order = get_distribution(
+    distr1= get_distribution(
         mps=tn_model,
         cond_features=cond_features,
         cond_data=cond_data,
@@ -807,31 +789,19 @@ if __name__ == '__main__':
         n_classes=n_classes,
         phys_dim=phys_dim,
         discr_steps=discr_steps
-    )
+    )[0][1]
 
-    print('PSTH Example:')
-    print(marg_feat_order, distr.shape)
-    print(distr)
-    print(distr.sum())
-    print()
+    cond_features = ['Systemic_therapy_history']
+    cond_data=[1]
 
-    # Example 5
-    #We know who have had treatment before (1) are less likely to respond
-    # Conditioning on 1: 0.513,0.487
-    #On 0: 0.2928,0.7072
-
-    cond_features = ['TMB']
-    cond_data_unscaled = [2]
-    cond_data_scaled=scale_input(cond_data_unscaled,cond_features)
-    print(cond_data_scaled)
     marg_features = ['Response']
 
     discr_steps = int(1e5)
 
-    distr, marg_feat_order = get_distribution(
+    distr2= get_distribution(
         mps=tn_model,
         cond_features=cond_features,
-        cond_data=cond_data_scaled,
+        cond_data=cond_data,
         marg_features=marg_features,
         in_features=featuresNA,
         out_feature=phenoNA,
@@ -839,87 +809,75 @@ if __name__ == '__main__':
         n_classes=n_classes,
         phys_dim=phys_dim,
         discr_steps=discr_steps
-    )
+    )[0][1]
 
-    print('TMB Example:')
-    print(marg_feat_order, distr.shape)
-    print(distr)
-    print(distr.sum())
+    print('PSTH Example:')
+    # print(marg_feat_order, distr.shape)
+    print(f'TT Score: {distr1,distr2}')
     print()
 
-#Now let's compute the examples from the paper
+
+
+#---------------Individual Patient Predictions------------------------------
+
+    def patient_prediction(patient):
+        cond_features = ['TMB', 'Albumin', 'NLR', 'Age', 'Systemic_therapy_history',
+                  'CancerType1', 'CancerType2', 'CancerType3', 'CancerType4',
+                  'CancerType5', 'CancerType6', 'CancerType7', 'CancerType8',
+                  'CancerType9', 'CancerType10', 'CancerType11', 'CancerType12',
+                  'CancerType13', 'CancerType14', 'CancerType15', 'CancerType16']
+        cond_data_scaled_tt= scale_input(patient,cond_features,"MinMax")
+        cond_data_scaled_lr= scale_input(patient,cond_features,"StandardScaler")
+        discr_steps = int(1e5)
+
+        distr= get_distribution(
+            mps=tn_model,
+            cond_features=cond_features,
+            cond_data=cond_data_scaled_tt,
+            marg_features=marg_features,
+            in_features=featuresNA,
+            out_feature=phenoNA,
+            num_features=numeric_featuresNA,
+            n_classes=n_classes,
+            phys_dim=phys_dim,
+            discr_steps=discr_steps
+        )[0][1]
+
+        loris=loris_scaled(cond_data_scaled_lr)
+
+        return loris,distr
+        
 
 #Patient 1:Cancer: Melanoma History: No Age: 64 Albumin: 4.8 g l−1
 #NLR: 4.7 PD-L1: – TMB: 21 mut per Mb
 #Scaled/Converetd: Cancer: 8/16=0.5 History: 0 Age: 64/85=0.753 Albumin: 4.8
 #NLR: 4.7/25: – TMB: 21/50
 
-
-    cond_features = ['TMB', 'Albumin', 'NLR', 'Age', 'Systemic_therapy_history',
-                  'CancerType1', 'CancerType2', 'CancerType3', 'CancerType4',
-                  'CancerType5', 'CancerType6', 'CancerType7', 'CancerType8',
-                  'CancerType9', 'CancerType10', 'CancerType11', 'CancerType12',
-                  'CancerType13', 'CancerType14', 'CancerType15', 'CancerType16']
-
     cond_data_unscaled = [21, 4.8, 4.7, 64, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]
-    cond_data_scaled= scale_input(cond_data_unscaled,cond_features)
-
-
-    marg_features = ['Response']
-
-    discr_steps = int(1e5)
-
-    distr, marg_feat_order = get_distribution(
-        mps=tn_model,
-        cond_features=cond_features,
-        cond_data=cond_data_scaled,
-        marg_features=marg_features,
-        in_features=featuresNA,
-        out_feature=phenoNA,
-        num_features=numeric_featuresNA,
-        n_classes=n_classes,
-        phys_dim=phys_dim,
-        discr_steps=discr_steps
-    )
-
-
+    loris, distr=patient_prediction(cond_data_unscaled)
     print('Patient 1:')
-    print(marg_feat_order, distr.shape)
-    print(distr)
-    print(distr.sum())
+    print(f'TT Score: {distr}, LORIS score: {loris}')
     print()
 
-#Patient 2:Cancer: Breast History: No Age: 42 Albumin: 4.6
+
+#Patient 2: Cancer: NSCLC, PSTH:Yes, Age:50, Albumin:3.5, NLR=6.3,TMB: 8
+
+    cond_data_unscaled = [8,3.5,6.3,50,1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0]
+    loris, distr=patient_prediction(cond_data_unscaled)
+    print('Patient 2:')
+    print(f'TT Score: {distr}, LORIS score: {loris}')
+    print()
+
+#Patient 3:Cancer: Breast History: No Age: 42 Albumin: 4.6
 #NLR: 2.3 PD-L1: – TMB:5
 
-    cond_features = ['TMB', 'Albumin', 'NLR', 'Age', 'Systemic_therapy_history',
-                  'CancerType1', 'CancerType2', 'CancerType3', 'CancerType4',
-                  'CancerType5', 'CancerType6', 'CancerType7', 'CancerType8',
-                  'CancerType9', 'CancerType10', 'CancerType11', 'CancerType12',
-                  'CancerType13', 'CancerType14', 'CancerType15', 'CancerType16']
     cond_data_unscaled = [5,4.6,2.3,42,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
-    cond_data_scaled= scale_input(cond_data_unscaled,cond_features)
-
-
-    marg_features = ['Response']
-
-    discr_steps = int(1e5)
-
-    distr, marg_feat_order = get_distribution(
-        mps=tn_model,
-        cond_features=cond_features,
-        cond_data=cond_data_scaled,
-        marg_features=marg_features,
-        in_features=featuresNA,
-        out_feature=phenoNA,
-        num_features=numeric_featuresNA,
-        n_classes=n_classes,
-        phys_dim=phys_dim,
-        discr_steps=discr_steps
-    )
-
-    print('Patient 2:')
-    print(marg_feat_order, distr.shape)
-    print(distr)
-    print(distr.sum())
+    loris, distr=patient_prediction(cond_data_unscaled)
+    print('Patient 3:')
+    print(f'TT Score: {distr}, LORIS score: {loris}')
     print()
+
+
+    #--------------Feature Sensitivity------------------------
+
+    # sensitivity_bar_plot()
