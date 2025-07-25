@@ -475,38 +475,82 @@ if __name__ == '__main__':
                            x_test=xt_test,
                            y_test=yt_test)
     
+    def loris_scaled(x):
+        (
+            TMB, Albumin, NLR, Age, PSTH,
+            CancerType1, CancerType2, CancerType3, CancerType4, CancerType5,
+            CancerType6, CancerType7, CancerType8, CancerType9, CancerType10,
+            CancerType11, CancerType12, CancerType13, CancerType14, CancerType15,
+            CancerType16
+        ) = x
 
+        CTCT = (
+            -0.0833 * CancerType1 + 0.0367 * CancerType2 - 0.0171 * CancerType3
+            - 0.0013 * CancerType4 + 0.0856 * CancerType5 + 0.0475 * CancerType6
+            + 0.0147 * CancerType7 - 0.0225 * CancerType8 - 0.0031 * CancerType9
+            + 0.0178 * CancerType10 + 0.0004 * CancerType11 - 0.0079 * CancerType12
+            - 0.1378 * CancerType13 + 0.1442 * CancerType14 + 0.0099 * CancerType15
+            - 0.0006 * CancerType16
+        )
+        
+        S = (
+            0.419 * TMB
+            - 0.4141 * PSTH
+            + 0.246 * Albumin
+            - 0.1592 * NLR
+            + 0.0537 * Age
+            + CTCT
+            - 0.1312
+        )
+
+        score = 1 / (1 + np.exp(-S))
+        return score
+
+#-------------------Compute predictions for all patients in select datasets------------
     datasets = ['Chowell_test', 'MSK1', 'MSK2']
-    all_data = []
+    all_data_standard = []
+    all_data_minmax=[]
 
 
     for dataset in datasets:
-        df = load_data(featuresNA, phenoNA, dataset, scaler_type)
-        all_data.append(df)
+        # df = load_data(featuresNA, phenoNA, dataset, scaler_type)
+        df_standard = load_data(featuresNA, phenoNA, dataset, 'StandardScaler')
+        df_minmax = load_data(featuresNA, phenoNA, dataset, 'MinMax')
+
+        all_data_standard.append(df_standard)
+        all_data_minmax.append(df_minmax)
+
 
     # Combine all datasets into one DataFrame
-    df_all = pd.concat(all_data, axis=0, ignore_index=True)
-
+    df_all_standard= pd.concat(all_data_standard, axis=0, ignore_index=True)
+    df_all_minmax= pd.concat(all_data_minmax, axis=0, ignore_index=True)
 
     # Start with the response column and keep the same index
-    predictions_df = df_all[['Response']].copy()
+    tt_predictions_df = df_all_minmax[['Response']].copy()
+    loris_predictions_df = df_all_standard[['Response']].copy()
 
     # Initialize an empty list to collect the predicted probabilities
-    predicted_probs = []
+    tt_predicted_probs = []
+    loris_predicted_probs = []
 
-    for i in range(len(df_all)):
 
-        patient=df_all.iloc[i]
-        patient_data = [patient['TMB'],patient['Albumin'],patient['NLR'],patient['Age'],patient['Systemic_therapy_history'],
-                     patient['CancerType1'],patient['CancerType2'],patient['CancerType3'],patient['CancerType4'],patient['CancerType5'],patient['CancerType6'],patient['CancerType7'],patient['CancerType8'],patient['CancerType9']
-                     ,patient['CancerType10'],patient['CancerType11'],patient['CancerType12'],patient['CancerType13'],patient['CancerType14'],patient['CancerType15'],patient['CancerType16']]
+    for i in range(len(df_all_standard)):
+
+        patient_tt=df_all_minmax.iloc[i]
+        patient_loris=df_all_standard.iloc[i]
+        patient_data_tt = [patient_tt['TMB'],patient_tt['Albumin'],patient_tt['NLR'],patient_tt['Age'],patient_tt['Systemic_therapy_history'],
+                     patient_tt['CancerType1'],patient_tt['CancerType2'],patient_tt['CancerType3'],patient_tt['CancerType4'],patient_tt['CancerType5'],patient_tt['CancerType6'],patient_tt['CancerType7'],patient_tt['CancerType8'],patient_tt['CancerType9']
+                     ,patient_tt['CancerType10'],patient_tt['CancerType11'],patient_tt['CancerType12'],patient_tt['CancerType13'],patient_tt['CancerType14'],patient_tt['CancerType15'],patient_tt['CancerType16']]
+        patient_data_loris = [patient_loris['TMB'],patient_loris['Albumin'],patient_loris['NLR'],patient_loris['Age'],patient_loris['Systemic_therapy_history'],
+                patient_loris['CancerType1'],patient_loris['CancerType2'],patient_loris['CancerType3'],patient_loris['CancerType4'],patient_loris['CancerType5'],patient_loris['CancerType6'],patient_loris['CancerType7'],patient_loris['CancerType8'],patient_loris['CancerType9']
+                ,patient_loris['CancerType10'],patient_loris['CancerType11'],patient_loris['CancerType12'],patient_loris['CancerType13'],patient_loris['CancerType14'],patient_loris['CancerType15'],patient_loris['CancerType16']]
 
         discr_steps = int(1e5)
 
-        prob= float(get_distribution(
+        tt_prob= float(get_distribution(
             mps=tn_model,
             cond_features=featuresNA,
-            cond_data=patient_data,
+            cond_data=patient_data_tt,
             marg_features=[phenoNA],
             in_features=featuresNA,
             out_feature=phenoNA,
@@ -515,25 +559,46 @@ if __name__ == '__main__':
             phys_dim=phys_dim,
             discr_steps=discr_steps
         )[0][1])
+        loris_prob=loris_scaled(patient_data_loris)
 
-        predicted_probs.append(prob)
+        tt_predicted_probs.append(tt_prob)
+        loris_predicted_probs.append(loris_prob)
 
     # Add the new column to the predictions DataFrame
-    predictions_df['Predicted_Prob'] = predicted_probs
+    tt_predictions_df['Predicted_Prob'] = tt_predicted_probs
+    loris_predictions_df['Predicted_Prob']=loris_predicted_probs
 
     #Now we make this dataframe match the one in LORIS
 
     # Rename columns to match desired output
-    predictions_df = predictions_df.rename(columns={
+    tt_predictions_df = tt_predictions_df.rename(columns={
+        'Response': 'y',
+        'Predicted_Prob': 'y_pred'
+    })
+    loris_predictions_df = loris_predictions_df.rename(columns={
         'Response': 'y',
         'Predicted_Prob': 'y_pred'
     })
 
     # Reorder columns to match: SAMPLE_ID, y, y_pred
-    predictions_df = predictions_df[['y', 'y_pred']]
+    tt_predictions_df = tt_predictions_df[['y', 'y_pred']]
+    loris_predictions_df = loris_predictions_df[['y', 'y_pred']]
+
+    tt_predictions_df.to_excel("TT_Predictions.xlsx")
+    loris_predictions_df.to_excel("LR_Predictions.xlsx")
+    df_dict=pd.read_excel('PanCancer_all_LLR6_Scaler(StandardScaler)_prediction copy.xlsx', index_col=0,sheet_name=['1','2','3'])  
+    df_og = pd.concat(df_dict.values(), axis=0)
+    # Optional: reset index if needed
+    df_og.reset_index(drop=True, inplace=True)
+    print(df_og.head())
 
 #-----------Now Create Plot--------------------
-    def loris_vs_response_curve(df, bin_size=0.1, bs_number=1000, Plot_type=None):
+    def response_curve(model, bin_size=0.1, bs_number=1000, Plot_type=None):
+        if model=='tt':
+            df=tt_predictions_df
+        elif model=='loris':
+            df=loris_predictions_df
+            # df=df_og
         y_true = df['y'].to_numpy()
         y_pred = df['y_pred'].to_numpy()
         sampleNUM = len(y_true)
@@ -581,7 +646,11 @@ if __name__ == '__main__':
         ax.axvspan(0.7, 1.0, facecolor='green', alpha=0.2)  # Green right region
 
         ax.set_ylabel("Response probability (%)")
-        ax.set_xlabel("TT score")
+        if model=='tt':
+            ax.set_xlabel("TT score")
+        elif model=='loris':
+            ax.set_xlabel("LORIS score")
+
         ax.set_ylim([-0.02, 1.02])
         ax.set_yticks([0, 0.25, 0.5, 0.75, 1])
         ax.set_yticklabels([0, 25, 50, 75, 100])
@@ -594,6 +663,8 @@ if __name__ == '__main__':
         plt.tight_layout()
         plt.show()
 
-    curve_data = loris_vs_response_curve(predictions_df)
+    curve_data = response_curve('tt')
+    curve_data = response_curve('loris')
+
 
     
