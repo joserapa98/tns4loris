@@ -44,7 +44,6 @@ def dataScaler(data, featuresNA, numeric_featuresNA, scaler_type):
     x = pd.DataFrame(data_scaled, columns=featuresNA)
     return x
 
-
 def create_model(model_name):
     if model_name == 'nn2':
         model_type = MLPClassifier
@@ -93,6 +92,46 @@ def load_data(featuresNA, phenoNA, dataset, scaler_type):
     all_data = dataScaler(data_no_nans, all_features, featuresNA, scaler_type)
     
     return all_data
+def load_data_LORIS(featuresNA, phenoNA, dataset):
+    data_dir = os.path.join(cwd, 'loris/02.Input')
+    data_file = os.path.join(data_dir, 'AllData.xlsx')
+
+    TMB_upper = 50
+    Age_upper = 85
+    NLR_upper = 25
+
+    datasets = ['Chowell_train']#,'Chowell_test', 'MSK1', 'MSK2', 'Shim_NSCLC','Kato_panCancer', 'Vanguri_NSCLC', 'Ravi_NSCLC', 'Pradat_panCancer']
+    
+    all_data = []
+    for sheet in datasets:
+        data = pd.read_excel(data_file, sheet_name=sheet, index_col=0)
+        all_data.append(data)
+
+    df_all = pd.concat(all_data, axis=0)
+
+    df_all['TMB'] = df_all['TMB'].clip(upper=TMB_upper)
+    df_all['Age'] = df_all['Age'].clip(upper=Age_upper)
+    df_all['NLR'] = df_all['NLR'].clip(upper=NLR_upper)
+
+    all_features = featuresNA + [phenoNA]
+    df_all_no_nans = df_all[all_features].dropna(axis=0).copy()
+
+    numeric_featuresNA = ['TMB', 'Albumin', 'NLR', 'Age']
+
+    # Fit scaler on all numeric features at once
+    scaler = StandardScaler()
+    df_all_no_nans[numeric_featuresNA] = scaler.fit_transform(df_all_no_nans[numeric_featuresNA])
+
+    # Now apply to the dataset of interest
+    single_data = pd.read_excel(data_file, sheet_name=dataset, index_col=0)
+    single_data['TMB'] = single_data['TMB'].clip(upper=TMB_upper)
+    single_data['Age'] = single_data['Age'].clip(upper=Age_upper)
+    single_data['NLR'] = single_data['NLR'].clip(upper=NLR_upper)
+
+    single_data_no_nans = single_data[all_features].dropna(axis=0).copy()
+    single_data_no_nans[numeric_featuresNA] = scaler.transform(single_data_no_nans[numeric_featuresNA])
+
+    return single_data_no_nans
 
 
 def train_model(model_name, x_train, y_train, x_test, y_test):
@@ -514,7 +553,7 @@ if __name__ == '__main__':
 
     for dataset in datasets:
         # df = load_data(featuresNA, phenoNA, dataset, scaler_type)
-        df_standard = load_data(featuresNA, phenoNA, dataset, 'StandardScaler')
+        df_standard = load_data_LORIS(featuresNA, phenoNA, dataset)
         df_minmax = load_data(featuresNA, phenoNA, dataset, 'MinMax')
 
         all_data_standard.append(df_standard)
@@ -594,46 +633,60 @@ if __name__ == '__main__':
 
 #-----------Now Create Plot--------------------
     def response_curve(model, bin_size=0.1, bs_number=1000, Plot_type=None):
-        if model=='tt':
-            df=tt_predictions_df
-        elif model=='loris':
-            df=loris_predictions_df
-            # df=df_og
+        if model == 'tt':
+            df = tt_predictions_df
+        elif model == 'loris':
+            df = loris_predictions_df
+
         y_true = df['y'].to_numpy()
         y_pred = df['y_pred'].to_numpy()
         sampleNUM = len(y_true)
         score_list = np.arange(0.0, 1.01, 0.01)
         num_scores = len(score_list)
-        
+
+        #Objective reponse ratio(what percentage of patients in this bin survived)
         ORR_list = [[] for _ in range(num_scores)]
-        ORR_low_list = [[] for _ in range(num_scores)]
-        ORR_high_list = [[] for _ in range(num_scores)]
-        patient_fraction = [[] for _ in range(num_scores)]
+        ORR_valid = [False for _ in range(num_scores)]  # Track if a bin ever had samples
 
-        idx_list = range(sampleNUM)
-
+        #boostrapping
         for _ in range(bs_number):
-            idx_resampled = random.choices(idx_list, k=sampleNUM)
+            idx_resampled = random.choices(range(sampleNUM), k=sampleNUM)
             y_t = y_true[idx_resampled]
             y_p = y_pred[idx_resampled]
 
             for i, score in enumerate(score_list):
-                high = y_p >= score
-                low = y_p < score
+                #set the bin size
                 bin_mask = (y_p <= score + bin_size / 2) & (y_p > score - bin_size / 2)
 
-                def safe_rate(mask):
-                    return y_t[mask].sum() / mask.sum() if mask.sum() else 0
+                #record ORR only if samples exist in this bin
+                if bin_mask.sum() > 0:
+                    ORR_list[i].append(y_t[bin_mask].mean())
+                    ORR_valid[i] = True
+                
+                else:
+                    ORR_list[i].append(np.nan)  # Use NaN for clarity
 
-                ORR_high_list[i].append(safe_rate(high))
-                ORR_low_list[i].append(safe_rate(low))
-                ORR_list[i].append(safe_rate(bin_mask))
-                patient_fraction[i].append(low.sum() / sampleNUM)
 
-        # Convert to summary stats
-        ORR_mean = [np.mean(x) for x in ORR_list]
-        ORR_05 = [np.quantile(x, 0.05) for x in ORR_list]
-        ORR_95 = [np.quantile(x, 0.95) for x in ORR_list]
+        # Compute statistics, skipping NaNs (mean after bootstrapping)
+        ORR_mean = [np.nanmean(x) if ORR_valid[i] else np.nan for i, x in enumerate(ORR_list)]
+        #Add the 95% confidence interval
+        ORR_05 = [np.nanquantile(x, 0.05) if ORR_valid[i] else np.nan for i, x in enumerate(ORR_list)]
+        ORR_95 = [np.nanquantile(x, 0.95) if ORR_valid[i] else np.nan for i, x in enumerate(ORR_list)]
+
+        #Forward-fill to smooth the line
+        #Instead of having drops when there are no samples, we hold at the previous point
+        def forward_fill(arr):
+            filled = []
+            last_val = np.nan
+            for val in arr:
+                if not np.isnan(val):
+                    last_val = val
+                filled.append(last_val)
+            return filled
+
+        ORR_mean = forward_fill(ORR_mean)
+        ORR_05 = forward_fill(ORR_05)
+        ORR_95 = forward_fill(ORR_95)
 
 
         # Plot
