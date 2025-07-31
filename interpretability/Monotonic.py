@@ -479,7 +479,7 @@ def response_curve(model, bin_size=0.1, bs_number=1000, Plot_type=None):
     ax.fill_between(score_list, ORR_05, ORR_95, color='r', alpha=0.25)
 
     # Add shading
-    ax.axvspan(0, 0.275, facecolor='grey', alpha=0.2)   # Grey left region
+    ax.axvspan(0, 0.5, facecolor='grey', alpha=0.2)   # Grey left region
     ax.axvspan(0.7, 1.0, facecolor='green', alpha=0.2)  # Green right region
 
     ax.set_ylabel("Response probability (%)")
