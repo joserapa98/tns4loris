@@ -92,6 +92,7 @@ def load_data(featuresNA, phenoNA, dataset, scaler_type):
     all_data = dataScaler(data_no_nans, all_features, featuresNA, scaler_type)
     
     return all_data
+
 def load_data_LORIS(featuresNA, phenoNA, dataset):
     data_dir = os.path.join(cwd, 'loris/02.Input')
     data_file = os.path.join(data_dir, 'AllData.xlsx')
@@ -100,7 +101,10 @@ def load_data_LORIS(featuresNA, phenoNA, dataset):
     Age_upper = 85
     NLR_upper = 25
 
-    datasets = ['Chowell_train']#,'Chowell_test', 'MSK1', 'MSK2', 'Shim_NSCLC','Kato_panCancer', 'Vanguri_NSCLC', 'Ravi_NSCLC', 'Pradat_panCancer']
+    #This will be the data the scaler is fitted to
+    # datasets = ['Chowell_train','Chowell_test', 'MSK1', 'MSK2', 'Shim_NSCLC','Kato_panCancer', 'Vanguri_NSCLC', 'Ravi_NSCLC', 'Pradat_panCancer']
+    # datasets = ['Chowell_train','Chowell_test', 'MSK1', 'MSK2','Kato_panCancer', 'Pradat_panCancer']
+    datasets=['Chowell_train']
     
     all_data = []
     for sheet in datasets:
@@ -411,6 +415,124 @@ def get_distribution(mps, cond_features, cond_data, marg_features,
     
     return distr, marg_features_order
 
+#This function is adapted from loris/code/07_1.PanCancer_LORIS_TMB_vs_resProb_curve.py
+def response_curve(model, bin_size=0.1, bs_number=1000, Plot_type=None):
+    if model == 'tt':
+        df = tt_predictions_df
+    elif model == 'loris':
+        df = loris_predictions_df
+
+    y_true = df['y'].to_numpy()
+    y_pred = df['y_pred'].to_numpy()
+    sampleNUM = len(y_true)
+    score_list = np.arange(0.0, 1.01, 0.01)
+    num_scores = len(score_list)
+
+    #Objective reponse ratio(what percentage of patients in this bin survived)
+    ORR_list = [[] for _ in range(num_scores)]
+    ORR_valid = [False for _ in range(num_scores)]  # Track if a bin ever had samples
+
+    #boostrapping
+    for _ in range(bs_number):
+        idx_resampled = random.choices(range(sampleNUM), k=sampleNUM)
+        y_t = y_true[idx_resampled]
+        y_p = y_pred[idx_resampled]
+
+        for i, score in enumerate(score_list):
+            #set the bin size
+            bin_mask = (y_p <= score + bin_size / 2) & (y_p > score - bin_size / 2)
+
+            #record ORR only if samples exist in this bin
+            if bin_mask.sum() > 0:
+                ORR_list[i].append(y_t[bin_mask].mean())
+                ORR_valid[i] = True
+            
+            else:
+                ORR_list[i].append(np.nan)  # Use NaN for clarity
+
+
+    # Compute statistics, skipping NaNs (mean after bootstrapping)
+    ORR_mean = [np.nanmean(x) if ORR_valid[i] else np.nan for i, x in enumerate(ORR_list)]
+    #Add the 95% confidence interval
+    ORR_05 = [np.nanquantile(x, 0.05) if ORR_valid[i] else np.nan for i, x in enumerate(ORR_list)]
+    ORR_95 = [np.nanquantile(x, 0.95) if ORR_valid[i] else np.nan for i, x in enumerate(ORR_list)]
+
+    #Forward-fill to smooth the line
+    #Instead of having drops when there are no samples, we hold at the previous point
+    def forward_fill(arr):
+        filled = []
+        last_val = np.nan
+        for val in arr:
+            if not np.isnan(val):
+                last_val = val
+            filled.append(last_val)
+        return filled
+
+    ORR_mean = forward_fill(ORR_mean)
+    ORR_05 = forward_fill(ORR_05)
+    ORR_95 = forward_fill(ORR_95)
+
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(3.5, 3))
+    ax.plot(score_list, ORR_mean, '-', color='r', label='Mean')
+    ax.fill_between(score_list, ORR_05, ORR_95, color='r', alpha=0.25)
+
+    # Add shading
+    ax.axvspan(0, 0.275, facecolor='grey', alpha=0.2)   # Grey left region
+    ax.axvspan(0.7, 1.0, facecolor='green', alpha=0.2)  # Green right region
+
+    ax.set_ylabel("Response probability (%)")
+    if model=='tt':
+        ax.set_xlabel("TT score")
+    elif model=='loris':
+        ax.set_xlabel("LORIS score")
+
+    ax.set_ylim([-0.02, 1.02])
+    ax.set_yticks([0, 0.25, 0.5, 0.75, 1])
+    ax.set_yticklabels([0, 25, 50, 75, 100])
+    ax.set_xlim([0, 1])
+    ax.set_xticks([0, 0.2, 0.4, 0.6, 0.8, 1])
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.plot([0, 1], [0, 1], '--',color='red', linewidth=1, label='y = x')
+
+
+    plt.tight_layout()
+    plt.show()
+
+def loris_scaled(x):
+    (
+        TMB, Albumin, NLR, Age, PSTH,
+        CancerType1, CancerType2, CancerType3, CancerType4, CancerType5,
+        CancerType6, CancerType7, CancerType8, CancerType9, CancerType10,
+        CancerType11, CancerType12, CancerType13, CancerType14, CancerType15,
+        CancerType16
+    ) = x
+
+    CTCT = (
+        -0.0833 * CancerType1 + 0.0367 * CancerType2 - 0.0171 * CancerType3
+        - 0.0013 * CancerType4 + 0.0856 * CancerType5 + 0.0475 * CancerType6
+        + 0.0147 * CancerType7 - 0.0225 * CancerType8 - 0.0031 * CancerType9
+        + 0.0178 * CancerType10 + 0.0004 * CancerType11 - 0.0079 * CancerType12
+        - 0.1378 * CancerType13 + 0.1442 * CancerType14 + 0.0099 * CancerType15
+        - 0.0006 * CancerType16
+    )
+    
+    S = (
+        0.419 * TMB
+        - 0.4141 * PSTH
+        + 0.246 * Albumin
+        - 0.1592 * NLR
+        + 0.0537 * Age
+        + CTCT
+        - 0.1312
+    )
+
+    score = 1 / (1 + np.exp(-S))
+    return score
+
+
 
 if __name__ == '__main__':
     # cwd = os.path.join(cwd, 'loris/code')
@@ -513,46 +635,18 @@ if __name__ == '__main__':
                            num_features=numeric_featuresNA,
                            x_test=xt_test,
                            y_test=yt_test)
+
     
-    def loris_scaled(x):
-        (
-            TMB, Albumin, NLR, Age, PSTH,
-            CancerType1, CancerType2, CancerType3, CancerType4, CancerType5,
-            CancerType6, CancerType7, CancerType8, CancerType9, CancerType10,
-            CancerType11, CancerType12, CancerType13, CancerType14, CancerType15,
-            CancerType16
-        ) = x
-
-        CTCT = (
-            -0.0833 * CancerType1 + 0.0367 * CancerType2 - 0.0171 * CancerType3
-            - 0.0013 * CancerType4 + 0.0856 * CancerType5 + 0.0475 * CancerType6
-            + 0.0147 * CancerType7 - 0.0225 * CancerType8 - 0.0031 * CancerType9
-            + 0.0178 * CancerType10 + 0.0004 * CancerType11 - 0.0079 * CancerType12
-            - 0.1378 * CancerType13 + 0.1442 * CancerType14 + 0.0099 * CancerType15
-            - 0.0006 * CancerType16
-        )
-        
-        S = (
-            0.419 * TMB
-            - 0.4141 * PSTH
-            + 0.246 * Albumin
-            - 0.1592 * NLR
-            + 0.0537 * Age
-            + CTCT
-            - 0.1312
-        )
-
-        score = 1 / (1 + np.exp(-S))
-        return score
 
 #-------------------Compute predictions for all patients in select datasets------------
+    #This section is adapated based on loris/code/06_1.PanCancer_LLR6_RF6_TMB_multiMetric_compare.py
     datasets = ['Chowell_test', 'MSK1', 'MSK2']
+    # datasets = ['Chowell_train','Chowell_test', 'MSK1', 'MSK2','Kato_panCancer', 'Pradat_panCancer']
     all_data_standard = []
     all_data_minmax=[]
 
 
     for dataset in datasets:
-        # df = load_data(featuresNA, phenoNA, dataset, scaler_type)
         df_standard = load_data_LORIS(featuresNA, phenoNA, dataset)
         df_minmax = load_data(featuresNA, phenoNA, dataset, 'MinMax')
 
@@ -564,6 +658,7 @@ if __name__ == '__main__':
     df_all_standard= pd.concat(all_data_standard, axis=0, ignore_index=True)
     df_all_minmax= pd.concat(all_data_minmax, axis=0, ignore_index=True)
 
+    print(df_all_standard.head())
     # Start with the response column and keep the same index
     tt_predictions_df = df_all_minmax[['Response']].copy()
     loris_predictions_df = df_all_standard[['Response']].copy()
@@ -575,21 +670,16 @@ if __name__ == '__main__':
 
     for i in range(len(df_all_standard)):
 
-        patient_tt=df_all_minmax.iloc[i]
-        patient_loris=df_all_standard.iloc[i]
-        patient_data_tt = [patient_tt['TMB'],patient_tt['Albumin'],patient_tt['NLR'],patient_tt['Age'],patient_tt['Systemic_therapy_history'],
-                     patient_tt['CancerType1'],patient_tt['CancerType2'],patient_tt['CancerType3'],patient_tt['CancerType4'],patient_tt['CancerType5'],patient_tt['CancerType6'],patient_tt['CancerType7'],patient_tt['CancerType8'],patient_tt['CancerType9']
-                     ,patient_tt['CancerType10'],patient_tt['CancerType11'],patient_tt['CancerType12'],patient_tt['CancerType13'],patient_tt['CancerType14'],patient_tt['CancerType15'],patient_tt['CancerType16']]
-        patient_data_loris = [patient_loris['TMB'],patient_loris['Albumin'],patient_loris['NLR'],patient_loris['Age'],patient_loris['Systemic_therapy_history'],
-                patient_loris['CancerType1'],patient_loris['CancerType2'],patient_loris['CancerType3'],patient_loris['CancerType4'],patient_loris['CancerType5'],patient_loris['CancerType6'],patient_loris['CancerType7'],patient_loris['CancerType8'],patient_loris['CancerType9']
-                ,patient_loris['CancerType10'],patient_loris['CancerType11'],patient_loris['CancerType12'],patient_loris['CancerType13'],patient_loris['CancerType14'],patient_loris['CancerType15'],patient_loris['CancerType16']]
+        #take in all features except labels
+        patient_tt = df_all_minmax.iloc[i, :-1]
+        patient_loris = df_all_standard.iloc[i, :-1]
 
         discr_steps = int(1e5)
 
         tt_prob= float(get_distribution(
             mps=tn_model,
             cond_features=featuresNA,
-            cond_data=patient_data_tt,
+            cond_data=patient_tt,
             marg_features=[phenoNA],
             in_features=featuresNA,
             out_feature=phenoNA,
@@ -598,7 +688,7 @@ if __name__ == '__main__':
             phys_dim=phys_dim,
             discr_steps=discr_steps
         )[0][1])
-        loris_prob=loris_scaled(patient_data_loris)
+        loris_prob=loris_scaled(patient_loris)
 
         tt_predicted_probs.append(tt_prob)
         loris_predicted_probs.append(loris_prob)
@@ -627,97 +717,12 @@ if __name__ == '__main__':
     loris_predictions_df.to_excel("LR_Predictions.xlsx")
     df_dict=pd.read_excel('PanCancer_all_LLR6_Scaler(StandardScaler)_prediction copy.xlsx', index_col=0,sheet_name=['1','2','3'])  
     df_og = pd.concat(df_dict.values(), axis=0)
-    # Optional: reset index if needed
     df_og.reset_index(drop=True, inplace=True)
-    print(df_og.head())
 
 #-----------Now Create Plot--------------------
-    def response_curve(model, bin_size=0.1, bs_number=1000, Plot_type=None):
-        if model == 'tt':
-            df = tt_predictions_df
-        elif model == 'loris':
-            df = loris_predictions_df
 
-        y_true = df['y'].to_numpy()
-        y_pred = df['y_pred'].to_numpy()
-        sampleNUM = len(y_true)
-        score_list = np.arange(0.0, 1.01, 0.01)
-        num_scores = len(score_list)
-
-        #Objective reponse ratio(what percentage of patients in this bin survived)
-        ORR_list = [[] for _ in range(num_scores)]
-        ORR_valid = [False for _ in range(num_scores)]  # Track if a bin ever had samples
-
-        #boostrapping
-        for _ in range(bs_number):
-            idx_resampled = random.choices(range(sampleNUM), k=sampleNUM)
-            y_t = y_true[idx_resampled]
-            y_p = y_pred[idx_resampled]
-
-            for i, score in enumerate(score_list):
-                #set the bin size
-                bin_mask = (y_p <= score + bin_size / 2) & (y_p > score - bin_size / 2)
-
-                #record ORR only if samples exist in this bin
-                if bin_mask.sum() > 0:
-                    ORR_list[i].append(y_t[bin_mask].mean())
-                    ORR_valid[i] = True
-                
-                else:
-                    ORR_list[i].append(np.nan)  # Use NaN for clarity
-
-
-        # Compute statistics, skipping NaNs (mean after bootstrapping)
-        ORR_mean = [np.nanmean(x) if ORR_valid[i] else np.nan for i, x in enumerate(ORR_list)]
-        #Add the 95% confidence interval
-        ORR_05 = [np.nanquantile(x, 0.05) if ORR_valid[i] else np.nan for i, x in enumerate(ORR_list)]
-        ORR_95 = [np.nanquantile(x, 0.95) if ORR_valid[i] else np.nan for i, x in enumerate(ORR_list)]
-
-        #Forward-fill to smooth the line
-        #Instead of having drops when there are no samples, we hold at the previous point
-        def forward_fill(arr):
-            filled = []
-            last_val = np.nan
-            for val in arr:
-                if not np.isnan(val):
-                    last_val = val
-                filled.append(last_val)
-            return filled
-
-        ORR_mean = forward_fill(ORR_mean)
-        ORR_05 = forward_fill(ORR_05)
-        ORR_95 = forward_fill(ORR_95)
-
-
-        # Plot
-        fig, ax = plt.subplots(figsize=(3.5, 3))
-        ax.plot(score_list, ORR_mean, '-', color='r', label='Mean')
-        ax.fill_between(score_list, ORR_05, ORR_95, color='r', alpha=0.25)
-
-        # Add shading
-        ax.axvspan(0, 0.275, facecolor='grey', alpha=0.2)   # Grey left region
-        ax.axvspan(0.7, 1.0, facecolor='green', alpha=0.2)  # Green right region
-
-        ax.set_ylabel("Response probability (%)")
-        if model=='tt':
-            ax.set_xlabel("TT score")
-        elif model=='loris':
-            ax.set_xlabel("LORIS score")
-
-        ax.set_ylim([-0.02, 1.02])
-        ax.set_yticks([0, 0.25, 0.5, 0.75, 1])
-        ax.set_yticklabels([0, 25, 50, 75, 100])
-        ax.set_xlim([0, 1])
-        ax.set_xticks([0, 0.2, 0.4, 0.6, 0.8, 1])
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-
-
-        plt.tight_layout()
-        plt.show()
-
-    curve_data = response_curve('tt')
-    curve_data = response_curve('loris')
+    response_curve('tt')
+    response_curve('loris')
 
 
     
