@@ -623,7 +623,54 @@ def sensitivity_bar_plot():
     plt.tight_layout()
     plt.show()
 
+def marginal_prediction(cond_data,cond_features):
+    cond_data_scaled_tt=scale_input(cond_data,cond_features,'MinMax')
+    marg_features = ['Response']
 
+    discr_steps = int(1e5)
+
+    distr= get_distribution(
+        mps=tn_model,
+        cond_features=cond_features,
+        cond_data=cond_data_scaled_tt,
+        marg_features=marg_features,
+        in_features=featuresNA,
+        out_feature=phenoNA,
+        num_features=numeric_featuresNA,
+        n_classes=n_classes,
+        phys_dim=phys_dim,
+        discr_steps=discr_steps
+    )[0][1]
+
+    return round(float(distr),4)
+
+
+def patient_prediction(patient):
+    cond_features = ['TMB', 'Albumin', 'NLR', 'Age', 'Systemic_therapy_history',
+                'CancerType1', 'CancerType2', 'CancerType3', 'CancerType4',
+                'CancerType5', 'CancerType6', 'CancerType7', 'CancerType8',
+                'CancerType9', 'CancerType10', 'CancerType11', 'CancerType12',
+                'CancerType13', 'CancerType14', 'CancerType15', 'CancerType16']
+    cond_data_scaled_tt= scale_input(patient,cond_features,"MinMax")
+    cond_data_scaled_lr= scale_input(patient,cond_features,"StandardScaler")
+    discr_steps = int(1e5)
+
+    distr= get_distribution(
+        mps=tn_model,
+        cond_features=cond_features,
+        cond_data=cond_data_scaled_tt,
+        marg_features=marg_features,
+        in_features=featuresNA,
+        out_feature=phenoNA,
+        num_features=numeric_featuresNA,
+        n_classes=n_classes,
+        phys_dim=phys_dim,
+        discr_steps=discr_steps
+    )[0][1]
+
+    loris=loris_scaled(cond_data_scaled_lr)
+
+    return round(float(loris),4),round(float(distr),4)
 
 if __name__ == '__main__':
     # cwd = os.path.join(cwd, 'loris/code')
@@ -729,32 +776,11 @@ if __name__ == '__main__':
 
     #--------------Section 3.3: Efficeint Compuation Examples-------------------------
 
-    def marginal_prediction(cond_data,cond_features):
-        cond_data_scaled_tt=scale_input(cond_data,cond_features,'MinMax')
-        marg_features = ['Response']
-
-        discr_steps = int(1e5)
-
-        distr= get_distribution(
-            mps=tn_model,
-            cond_features=cond_features,
-            cond_data=cond_data_scaled_tt,
-            marg_features=marg_features,
-            in_features=featuresNA,
-            out_feature=phenoNA,
-            num_features=numeric_featuresNA,
-            n_classes=n_classes,
-            phys_dim=phys_dim,
-            discr_steps=discr_steps
-        )[0][1]
-
-        return distr
-
     # TMB: We know TMB above 27 indicates better response
     # cond_features = ['TMB']
 
-    low=marginal_prediction(10,['TMB'])
-    mid=marginal_prediction(30,['TMB'])
+    low=marginal_prediction(5,['TMB'])
+    mid=marginal_prediction(27,['TMB'])
     high=marginal_prediction(50,['TMB'])
 
     print('TMB Example:')
@@ -813,39 +839,12 @@ if __name__ == '__main__':
 
     print('PSTH Example:')
     # print(marg_feat_order, distr.shape)
-    print(f'TT Score: {distr1,distr2}')
+    print(f'TT Score: {round(float(distr1),4),round(float(distr2),4)}')
     print()
 
 
 
 #---------------Individual Patient Predictions------------------------------
-
-    def patient_prediction(patient):
-        cond_features = ['TMB', 'Albumin', 'NLR', 'Age', 'Systemic_therapy_history',
-                  'CancerType1', 'CancerType2', 'CancerType3', 'CancerType4',
-                  'CancerType5', 'CancerType6', 'CancerType7', 'CancerType8',
-                  'CancerType9', 'CancerType10', 'CancerType11', 'CancerType12',
-                  'CancerType13', 'CancerType14', 'CancerType15', 'CancerType16']
-        cond_data_scaled_tt= scale_input(patient,cond_features,"MinMax")
-        cond_data_scaled_lr= scale_input(patient,cond_features,"StandardScaler")
-        discr_steps = int(1e5)
-
-        distr= get_distribution(
-            mps=tn_model,
-            cond_features=cond_features,
-            cond_data=cond_data_scaled_tt,
-            marg_features=marg_features,
-            in_features=featuresNA,
-            out_feature=phenoNA,
-            num_features=numeric_featuresNA,
-            n_classes=n_classes,
-            phys_dim=phys_dim,
-            discr_steps=discr_steps
-        )[0][1]
-
-        loris=loris_scaled(cond_data_scaled_lr)
-
-        return loris,distr
         
 
 #Patient 1:Cancer: Melanoma History: No Age: 64 Albumin: 4.8 g l−1
@@ -880,4 +879,4 @@ if __name__ == '__main__':
 
     #--------------Feature Sensitivity------------------------
 
-    # sensitivity_bar_plot()
+    sensitivity_bar_plot()
