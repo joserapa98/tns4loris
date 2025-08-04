@@ -1,7 +1,6 @@
 import os
 import copy
-
-from itertools import chain, combinations
+import random
 
 from sklearn import linear_model
 from sklearn.neural_network import MLPClassifier
@@ -10,22 +9,19 @@ from sklearn.metrics import accuracy_score, balanced_accuracy_score
 
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
 
 import torch
 import tensorkrowch as tk
 from tensorkrowch.decompositions import tt_rss
-import matplotlib.pyplot as plt
+
 
 cwd = os.getcwd()
 
 
-#---------------------Efficient Computations--------------------
-def all_combinations(lst):
-    return list(chain.from_iterable(combinations(lst, r)
-                                    for r in range(1, len(lst) + 1)))
+#--------------------- Load and scale data --------------------
 
-
-def data_scaler(data, featuresNA, numeric_featuresNA, scaler_type):
+def data_scaler(data, features, num_features, scaler_type):
     data_scaled = copy.deepcopy(data)
     if scaler_type == 'Standard':
         scaler_class = StandardScaler
@@ -35,20 +31,20 @@ def data_scaler(data, featuresNA, numeric_featuresNA, scaler_type):
         raise ValueError(f'Unrecognized scaler type of {scaler_type}. '
                          'Only "Standard" and "MinMax" are accepted.')
     scalers_dict = {}
-    for feature in numeric_featuresNA:
+    for feature in num_features:
         scaler = scaler_class()
         data_scaled[feature] = scaler.fit_transform(data[[feature]])
         scalers_dict[feature] = scaler
-    df_data_scaled = pd.DataFrame(data_scaled, columns=featuresNA)
+    df_data_scaled = pd.DataFrame(data_scaled, columns=features)
     return df_data_scaled, scalers_dict
 
 
-def scale_input(patient, cond_features, scalers_dict):
+def scale_input(patient, features, scalers_dict):
     """
     Takes in a list of features and their names and scales each one using
     the corresponding scaler fit to Chowell train data.
     """
-    patient_df= pd.DataFrame([patient], columns=cond_features)
+    patient_df= pd.DataFrame([patient], columns=features)
     
     for feature in patient_df.columns:
         if feature in scalers_dict:
@@ -57,6 +53,34 @@ def scale_input(patient, cond_features, scalers_dict):
     patient_list = patient_df.iloc[0].tolist()
     return patient_list
 
+
+def load_data(cwd, in_features, out_feature, num_features, dataset, scaler_type):
+    data_file = os.path.join(cwd, 'loris', '02.Input', 'AllData.xlsx')
+
+    # Data truncation
+    TMB_upper = 50
+    Age_upper = 85
+    NLR_upper = 25
+
+    data = pd.read_excel(data_file, sheet_name=dataset, index_col=0)
+    
+    # Data truncation
+    data['TMB'] = [c if c < TMB_upper else TMB_upper for c in data['TMB']]
+    data['Age'] = [c if c < Age_upper else Age_upper for c in data['Age']]
+    data['NLR'] = [c if c < NLR_upper else NLR_upper for c in data['NLR']]
+    
+    all_features = in_features + [out_feature]
+    data_no_nans = data[all_features].dropna(axis=0)
+    
+    all_data, scalers_dict = data_scaler(data_no_nans,
+                                         all_features,
+                                         num_features,
+                                         scaler_type)
+    
+    return all_data, scalers_dict
+
+
+#------------------ Train LR model ------------------------------------
 
 def create_model(model_name):
     if model_name == 'nn2':
@@ -84,32 +108,6 @@ def create_model(model_name):
     return model
 
 
-def load_data(cwd, featuresNA, phenoNA, dataset, scaler_type):
-    data_file = os.path.join(cwd, 'loris', '02.Input', 'AllData.xlsx')
-
-    # Data truncation
-    TMB_upper = 50
-    Age_upper = 85
-    NLR_upper = 25
-
-    data = pd.read_excel(data_file, sheet_name=dataset, index_col=0)
-    
-    # Data truncation
-    data['TMB'] = [c if c < TMB_upper else TMB_upper for c in data['TMB']]
-    data['Age'] = [c if c < Age_upper else Age_upper for c in data['Age']]
-    data['NLR'] = [c if c < NLR_upper else NLR_upper for c in data['NLR']]
-    
-    all_features = featuresNA + [phenoNA]
-    data_no_nans = data[all_features].dropna(axis=0)
-    
-    all_data, scalers_dict = data_scaler(data_no_nans,
-                                         all_features,
-                                         featuresNA,
-                                         scaler_type)
-    
-    return all_data, scalers_dict
-
-
 def train_model(model_name, x_train, y_train, x_test, y_test):
     model = create_model(model_name)
     model.fit(x_train, y_train)
@@ -127,7 +125,8 @@ def train_model(model_name, x_train, y_train, x_test, y_test):
     return model
 
 
-# NOTE: For MPS
+#------------------ MPS Accuracies ------------------------------------
+
 def total_acc(y_true, y_pred):
     return (y_pred == y_true).sum() / len(y_true)
 
@@ -139,6 +138,8 @@ def balanced_acc(y_true, y_pred):
         len(y_true[y_true == 1])
     return (acc_0 + acc_1) / 2
 
+
+#------------------ Tensorization ------------------------------------
 
 @torch.no_grad()
 def tensorize(model, x_train, y_train, x_test, y_test,
@@ -220,11 +221,6 @@ def renormalize(mps, phys_dim, discr_steps, n_classes, num_features,
     n_features = mps.n_features
     
     # For first 4 continuous variables
-    # NOTE: This assumed we were using MinMax scaler
-    # aux_domain = torch.linspace(0, 1, discr_steps).unsqueeze(1)
-    # emb_input_cont = embedding(aux_domain).squeeze(1)
-    # emb_input_cont = emb_input_cont.sum(dim=0, keepdim=True) / discr_steps
-    # NOTE: This should work for any scaler
     emb_input_cont = []
     for i in range(n_num):
         aux_domain = torch.linspace(x_train[:, i].min(),
@@ -243,8 +239,6 @@ def renormalize(mps, phys_dim, discr_steps, n_classes, num_features,
     emb_input_out = torch.ones(1, n_classes)
     
     # All features
-    # emb_input = [emb_input_cont.clone() for _ in range(n_num)] + \
-    #             [emb_input_discr.clone() for _ in range(n_cat)]
     emb_input = emb_input_cont + [emb_input_discr.clone() for _ in range(n_cat)]
     emb_input = emb_input[:(n_features // 2)] + [emb_input_out] + \
                 emb_input[(n_features // 2):]
@@ -280,6 +274,8 @@ def renormalize(mps, phys_dim, discr_steps, n_classes, num_features,
     
     return mps
 
+
+#------------------ Distributions ------------------------------------
 
 @torch.no_grad()
 def get_distribution(mps, cond_features, cond_data, marg_features,
@@ -331,9 +327,6 @@ def get_distribution(mps, cond_features, cond_data, marg_features,
         elif feat == out_feature:
             emb_input_marg_out = torch.ones(n_classes)
         else:
-            # NOTE: This assumed we were using MinMax scaler
-            # aux_domain = torch.linspace(0, 1, discr_steps).unsqueeze(1)
-            # NOTE: This should work for any scaler
             aux_domain = torch.linspace(x_train[:, dict_feat_idx[feat]].min(),
                                         x_train[:, dict_feat_idx[feat]].max(),
                                         discr_steps).unsqueeze(1)
@@ -352,9 +345,6 @@ def get_distribution(mps, cond_features, cond_data, marg_features,
             aux_domain = torch.arange(n_classes).unsqueeze(1)
             emb_input_marg = basis_embedding(aux_domain).squeeze(1)
         else:
-            # NOTE: This assumed we were using MinMax scaler
-            # aux_domain = torch.linspace(0, 1, discr_steps).unsqueeze(1)
-            # NOTE: This should work for any scaler
             aux_domain = torch.linspace(x_train[:, dict_feat_idx[feat]].min(),
                                         x_train[:, dict_feat_idx[feat]].max(),
                                         discr_steps).unsqueeze(1)
@@ -414,503 +404,269 @@ def get_distribution(mps, cond_features, cond_data, marg_features,
     return distr, marg_features_order
 
 
-def marginal_prediction(cond_data, cond_features, scalers_dict, x_train):
-    cond_data_scaled = scale_input(cond_data, cond_features, scalers_dict)
+def marginal_prediction(mps, cond_feature, cond_data, in_features, out_feature,
+                        num_features, n_classes, phys_dim, x_train, discr_steps,
+                        scalers_dict):
+    cond_data_scaled = scale_input(cond_data, [cond_feature], scalers_dict)
     marg_features = ['Response']
 
-    discr_steps = int(1e5)
-
-    distr = get_distribution(
-        mps=tn_model,
-        cond_features=cond_features,
+    distr, _ = get_distribution(
+        mps=mps,
+        cond_features=[cond_feature],
         cond_data=cond_data_scaled,
         marg_features=marg_features,
-        in_features=featuresNA,
-        out_feature=phenoNA,
-        num_features=numeric_featuresNA,
+        in_features=in_features,
+        out_feature=out_feature,
+        num_features=num_features,
         n_classes=n_classes,
         phys_dim=phys_dim,
         x_train=x_train,
         discr_steps=discr_steps
-    )[0][1]
-
-    return float(distr)
-
-
-
-# #----------------Helper Functions: Get Scaled Patients and Average Feature Values--------------------------------
-# #Create scalars for each variable
-# data_dir = os.path.join(cwd,'loris/02.Input')
-# data_file = os.path.join(data_dir, 'AllData.xlsx')
-# # Data truncation
-# TMB_upper = 50
-# Age_upper = 85
-# NLR_upper = 25
-# featuresNA = ['TMB', 'Albumin', 'NLR', 'Age', 'Systemic_therapy_history',
-#                 'CancerType1', 'CancerType2', 'CancerType3', 'CancerType4',
-#                 'CancerType5', 'CancerType6', 'CancerType7', 'CancerType8',
-#                 'CancerType9', 'CancerType10', 'CancerType11', 'CancerType12',
-#                 'CancerType13', 'CancerType14', 'CancerType15', 'CancerType16']
-# nonbinary=['TMB', 'Albumin', 'NLR', 'Age']
-# phenoNA = 'Response'
-# data = pd.read_excel(data_file, sheet_name='Chowell_train', index_col=0)
-
-# # Data truncation
-# data['TMB'] = [c if c < TMB_upper else TMB_upper for c in data['TMB']]
-# data['Age'] = [c if c < Age_upper else Age_upper for c in data['Age']]
-# data['NLR'] = [c if c < NLR_upper else NLR_upper for c in data['NLR']]
-# all_features = featuresNA + [phenoNA]
-# data_no_nans = data[all_features].dropna(axis=0)
-
-# minmax_fit_scalers = {}
-# standard_fit_scalers = {}
-# for feature in nonbinary:
-#     scaler_minmax = MinMaxScaler()
-#     scaler_standard=StandardScaler()
-#     scaler_minmax.fit(data_no_nans[[feature]])
-#     scaler_standard.fit(data_no_nans[[feature]])
-#     minmax_fit_scalers[feature] = scaler_minmax
-#     standard_fit_scalers[feature]=scaler_standard
-
-# #Compute Average of Numeric Features
-# mean_TMB=([np.mean(data_no_nans['TMB'])],['TMB'])[0][0]
-# mean_Albumin=([np.mean(data_no_nans['Albumin'])],['Albumin'])[0][0]
-# mean_NLR=([np.mean(data_no_nans['NLR'])],['NLR'])[0][0]
-# mean_Age=([np.mean(data_no_nans['Age'])],['Age'])[0][0]
-
-# print(f'Mean numeric features(TMB, Albumin,NLR, Age) are:{mean_TMB,mean_Albumin,mean_NLR,mean_Age}')
-
-# #Find most common cancer variable
-# cancer_variables=['CancerType1', 'CancerType2', 'CancerType3', 'CancerType4',
-#                 'CancerType5', 'CancerType6', 'CancerType7', 'CancerType8',
-#                 'CancerType9', 'CancerType10', 'CancerType11', 'CancerType12',
-#                 'CancerType13', 'CancerType14', 'CancerType15', 'CancerType16']
-# freq=0
-# for v in cancer_variables:
-#     sum=np.sum(data_no_nans[v])
-#     if sum>freq:
-#         most_common=v
-#         freq=sum
-# print('The most common cancer type is',most_common)
-# #most common type in Cancer Type 11
-
-# #Find most common PSTH value
-# psth_1=np.sum(data_no_nans['Systemic_therapy_history'])
-# psth_0=len(data_no_nans['Systemic_therapy_history']) - np.sum(data_no_nans['Systemic_therapy_history'])
-# if psth_1>psth_0:
-#     most_common=1
-# elif psth_1<psth_0:
-#     most_common=0
-# print(f'The most common PSTH value is {most_common}')
-
-
-#--------------------LORIS Equivalent Computations---------------------------
-# def loris_unscaled(TMB=mean_TMB,Albumin=mean_Albumin,NLR=mean_NLR,Age=mean_Age,PSTH=1,
-#                    CancerType1=0,CancerType2=0,CancerType3=0,CancerType4=0,CancerType5=0,CancerType6=0,CancerType7=0,CancerType8=0,
-#                    CancerType9=0,CancerType10=0,CancerType11=1,CancerType12=0,CancerType13=0,CancerType14=0,CancerType15=0,CancerType16=0):
-#     mean_patient=[mean_TMB,mean_Albumin,mean_NLR,mean_Age,1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0]
-
+    )
     
-#     CTCT= -0.3323 *CancerType1+0.3323*CancerType2-0.102*CancerType3-0.0079*CancerType4+0.55*CancerType5+0.2306*CancerType6+0.0678*CancerType7
-#     -0.1189*CancerType8-0.0086*CancerType9+0.1255*CancerType10+0.0008*CancerType11-0.052*CancerType12-1.1169*CancerType13+0.5451*CancerType14+0.0542*CancerType15
-#     -0.0033*CancerType16
-#     S = (0.0371 * TMB
-#         - 0.8775 * PSTH
-#         + 0.5382 * Albumin
-#         - 0.033 * NLR
-#         + 0.0049 * Age
-#         + CTCT
-#         - 2.0886
-#     )
-#     score=(1/(1+np.e**(-S)))
-#     return score
+    return float(distr[1])
 
-# NOTE: needed?
-# def loris_scaled(x):
-#     (
-#         TMB, Albumin, NLR, Age, PSTH,
-#         CancerType1, CancerType2, CancerType3, CancerType4, CancerType5,
-#         CancerType6, CancerType7, CancerType8, CancerType9, CancerType10,
-#         CancerType11, CancerType12, CancerType13, CancerType14, CancerType15,
-#         CancerType16
-#     ) = x
 
-#     CTCT = (
-#         -0.0833 * CancerType1 + 0.0367 * CancerType2 - 0.0171 * CancerType3
-#         - 0.0013 * CancerType4 + 0.0856 * CancerType5 + 0.0475 * CancerType6
-#         + 0.0147 * CancerType7 - 0.0225 * CancerType8 - 0.0031 * CancerType9
-#         + 0.0178 * CancerType10 + 0.0004 * CancerType11 - 0.0079 * CancerType12
-#         - 0.1378 * CancerType13 + 0.1442 * CancerType14 + 0.0099 * CancerType15
-#         - 0.0006 * CancerType16
-#     )
+@torch.no_grad()
+def patient_prediction(model, patient, features, scalers_dict):
+    patient_scaled = scale_input(patient, features, scalers_dict)
+    patient_scaled = torch.tensor(patient_scaled).unsqueeze(0)
     
-#     S = (
-#         0.419 * TMB
-#         - 0.4141 * PSTH
-#         + 0.246 * Albumin
-#         - 0.1592 * NLR
-#         + 0.0537 * Age
-#         + CTCT
-#         - 0.1312
-#     )
-
-#     score = 1 / (1 + np.exp(-S))
-#     return score
+    result = model(patient_scaled)
+    result = result / result.sum(dim=1, keepdim=True)
+    return result[0, 1]
 
 
-#------------------Feature Sensitivity------------------------------------
-def feature_sensitivity(feature,model):
-    '''This function marginalizes on all variables, setting them 
-    to the mean value for each feature. The feature of interest is perturbed
-    between 0 and 1'''
-    
-    cond_features = ['TMB', 'Albumin', 'NLR', 'Age', 'Systemic_therapy_history',
-                'CancerType1', 'CancerType2', 'CancerType3', 'CancerType4',
-                'CancerType5', 'CancerType6', 'CancerType7', 'CancerType8',
-                'CancerType9', 'CancerType10', 'CancerType11', 'CancerType12',
-                'CancerType13', 'CancerType14', 'CancerType15', 'CancerType16']
-    marg_features = ['Response']
-    discr_steps = int(1e5)
-    xvals = np.linspace(0.0, 1.0, 500)
+#------------------ Feature sensitivity ------------------------------------
+
+@torch.no_grad()
+def feature_sensitivity_cond(feature, model, x_train, features, scalers_dict):
+    """
+    This function conditions on all variables, setting them to the mean value
+    for each feature. The feature of interest is perturbed in its domain.
+    """
+    try:
+        base_data = [scalers_dict['TMB'].mean_,
+                     scalers_dict['Albumin'].mean_,
+                     scalers_dict['NLR'].mean_,
+                     scalers_dict['Age'].mean_, 1] + [0] * (len(features) - 5)
+    except:
+        base_data = [scalers_dict['TMB'].min_,
+                     scalers_dict['Albumin'].min_,
+                     scalers_dict['NLR'].min_,
+                     scalers_dict['Age'].min_, 1] + [0] * (len(features) - 5)
+    base_data_scaled = scale_input(base_data, features, scalers_dict)
+    base_data_scaled = torch.tensor(base_data_scaled).unsqueeze(0)
+
     yvals = []
-    base_data = [mean_TMB, mean_Albumin, mean_NLR, mean_Age,1] + [0] * (len(cond_features) - 5)
-    cond_data = base_data.copy()
-
-    if feature == 'Cancer_Type':
-        for i in range(6, len(base_data)):
-            cond_data[i] = 1  # set 1 at the current position (others remain 0 from index 5 onward)
-
-            if model == 'TT':
-
-                cond_data_scaled=scale_input(cond_data,cond_features,"MinMax")
-                score = get_distribution(
-                    mps=tn_model,
-                    cond_features=cond_features,
-                    cond_data=cond_data_scaled,
-                    marg_features=marg_features,
-                    in_features=featuresNA,
-                    out_feature=phenoNA,
-                    num_features=numeric_featuresNA,
-                    n_classes=n_classes,
-                    phys_dim=phys_dim,
-                    discr_steps=discr_steps
-                )[0][1]
-
-            elif model == 'LORIS':
-                cond_data_scaled=scale_input(cond_data,cond_features,'Standard')
-                score = loris_scaled(cond_data_scaled)
-
+    
+    if feature == 'CancerType':
+        for i in [5, len(base_data) - 1]:
+            cond_data = base_data_scaled.clone()
+            cond_data[0, i] = 1  # set 1 at the current position (others remain 0 from index 5 onward)
+            
+            result = model(cond_data).detach()
+            score = result / result.sum(dim=1, keepdim=True)
+            score = score[0, 1]
             yvals.append(score)
 
     else:
-        if model=='TT':
-            cond_data_scaled=scale_input(cond_data,cond_features,'MinMax')
+        feat_idx = features.index(feature)
+        for limit in ['min', 'max']:
+            cond_data = base_data_scaled.clone()
+            if limit == 'min':
+                cond_data[0, feat_idx] = x_train[:, feat_idx].min()
+            elif limit == 'max':
+                cond_data[0, feat_idx] = x_train[:, feat_idx].max()
             
-        elif model=='LORIS':
-            cond_data_scaled=scale_input(cond_data,cond_features,'Standard')
+            result = model(cond_data).detach()
+            score = result / result.sum(dim=1, keepdim=True)
+            score = score[0, 1]
+            yvals.append(score)
 
-        for j in xvals:
-            if feature=='TMB':
-                cond_data_scaled[0]=j
-            elif feature=='Albumin':
-                cond_data_scaled[1]=j
-            elif feature=='NLR':
-                cond_data_scaled[2]=j
-            elif feature=='Age':
-                cond_data_scaled[3]=j
-            elif feature=='Systemic_therapy_history':
-                cond_data_scaled[4]=j
+    return yvals[-1] - yvals[0]
 
-            if model=='TT':
-                
-                score = get_distribution(
-                    mps=tn_model,
-                    cond_features=cond_features,
-                    cond_data=cond_data_scaled,
-                    marg_features=marg_features,
-                    in_features=featuresNA,
-                    out_feature=phenoNA,
-                    num_features=numeric_featuresNA,
-                    n_classes=n_classes,
-                    phys_dim=phys_dim,
-                    discr_steps=discr_steps
-                )[0][1]
-            elif model=='LORIS':
-                score=loris_scaled(cond_data_scaled)
+
+def feature_sensitivity_marg(feature, mps, in_features, out_feature,
+                             num_features, n_classes, phys_dim, x_train,
+                             discr_steps, scalers_dict):
+    """
+    This function marginalizes all variables, except the feature of interest.
+    The feature of interest is perturbed in its domain. This is only for MPS,
+    not LORIS.
+    """
+    yvals = []
+    
+    if feature == 'CancerType':
+        for idx in ['1', '16']:
+            score = marginal_prediction(
+                mps=mps,
+                cond_feature=feature+idx,
+                cond_data=1,
+                in_features=in_features,
+                out_feature=out_feature,
+                num_features=num_features,
+                n_classes=n_classes,
+                phys_dim=phys_dim,
+                x_train=x_train,
+                discr_steps=discr_steps,
+                scalers_dict=scalers_dict)
             
             yvals.append(score)
 
-    return(yvals[-1]-yvals[0])
+    else:
+        feat_idx = in_features.index(feature)
+        for limit in ['min', 'max']:
+            if limit == 'min':
+                cond_data = float(x_train[:, feat_idx].min())
+            elif limit == 'max':
+                cond_data = float(x_train[:, feat_idx].max())
+            
+            score = marginal_prediction(
+                mps=mps,
+                cond_feature=feature,
+                cond_data=cond_data,
+                in_features=in_features,
+                out_feature=out_feature,
+                num_features=num_features,
+                n_classes=n_classes,
+                phys_dim=phys_dim,
+                x_train=x_train,
+                discr_steps=discr_steps,
+                scalers_dict=scalers_dict)
+            
+            yvals.append(score)
 
-def sensitivity_bar_plot():
-    # Features and sensitivity scores
-    features = ['TMB', 'Albumin', 'NLR', 'Age', 'Systemic_therapy_history', 'Cancer_Type']
-    tt_scores = []
-    loris_scores = []
+    return yvals[-1] - yvals[0]
 
-    # Collect sensitivity scores
-    for feature in features:
-        tt_score = feature_sensitivity(feature, 'TT')
-        loris_score = feature_sensitivity(feature, 'LORIS')
-        tt_scores.append(tt_score)
-        loris_scores.append(loris_score)
 
-    # Bar plot setup
+@torch.no_grad()
+def feature_sensitivity_coeffs(feature, model, x_train, features, scalers_dict):
+    """
+    This function tries to recover LORIS coefficients. The feature of interest
+    is perturbed in its domain.
+    """
+    try:
+        base_data = [scalers_dict['TMB'].mean_,
+                     scalers_dict['Albumin'].mean_,
+                     scalers_dict['NLR'].mean_,
+                     scalers_dict['Age'].mean_, 1] + [0] * (len(features) - 5)
+    except:
+        base_data = [scalers_dict['TMB'].min_,
+                     scalers_dict['Albumin'].min_,
+                     scalers_dict['NLR'].min_,
+                     scalers_dict['Age'].min_, 1] + [0] * (len(features) - 5)
+    base_data_scaled = scale_input(base_data, features, scalers_dict)
+    base_data_scaled = torch.tensor(base_data_scaled).unsqueeze(0)
+    
+    xvals = []
+    yvals = []
+    
+    feat_idx = features.index(feature)
+    for limit in ['min', 'max']:
+        cond_data = base_data_scaled.clone()
+        if limit == 'min':
+            cond_data[0, feat_idx] = x_train[:, feat_idx].min()
+        elif limit == 'max':
+            cond_data[0, feat_idx] = x_train[:, feat_idx].max()
+        xvals.append(cond_data[0, feat_idx].item())
+        
+        result = model(cond_data).detach()
+        score = result / result.sum(dim=1, keepdim=True)
+        score = score[0, 1]
+        logit = (score / (1 - score)).log()
+        
+        yvals.append(logit)
+    
+    coeff = (yvals[-1] - yvals[0]) / (xvals[-1] - xvals[0])
+    return coeff
 
-    x = np.arange(len(features))  # label locations
-    width = 0.35  # width of the bars
 
-    # Replace label just for plotting
-    plot_labels = ['PSTH' if f == 'Systemic_therapy_history' else f for f in features]
+#------------------ Monotonic plots ------------------------------------
 
-    fig, ax = plt.subplots(figsize=(8, 5))
-    bars1 = ax.bar(x - width/2, tt_scores, width, label='TT', color='skyblue', edgecolor='black')
-    bars2 = ax.bar(x + width/2, loris_scores, width, label='LORIS', color='salmon', edgecolor='black')
+# This function is adapted from loris/code/07_1.PanCancer_LORIS_TMB_vs_resProb_curve.py
+@torch.no_grad()
+def response_curve(model, x_train, y_train, xlabel,
+                   bin_size=0.1, bs_number=1000, Plot_type=None):
+    result = model(x_train)
+    score = result / result.sum(dim=1, keepdim=True)
+    y_pred = score[:, 1].numpy()
+    y_true = y_train.numpy()
+    
+    sampleNUM = len(y_true)
+    score_list = np.arange(0.0, 1.01, 0.01)
+    num_scores = len(score_list)
 
-    # Axes settings
-    ax.set_xlabel('Feature')
-    ax.set_ylabel('Sensitivity Score')
-    ax.set_title('Feature Sensitivity')
-    ax.set_xticks(x)
-    ax.set_xticklabels(plot_labels)
-    ax.legend()
+    # Objective reponse ratio (what percentage of patients in this bin survived)
+    ORR_list = [[] for _ in range(num_scores)]
+    ORR_valid = [False for _ in range(num_scores)]  # Track if a bin ever had samples
+
+    # Bootstrapping
+    for _ in range(bs_number):
+        idx_resampled = random.choices(range(sampleNUM), k=sampleNUM)
+        aux_y_true = y_true[idx_resampled]
+        aux_y_pred = y_pred[idx_resampled]
+        
+        for i, score in enumerate(score_list):
+            # Set the bin size
+            bin_mask = (aux_y_pred > score - bin_size / 2) & \
+                (aux_y_pred <= score + bin_size / 2)
+
+            # Record ORR only if samples exist in this bin
+            if bin_mask.sum() > 0:
+                ORR_list[i].append(aux_y_true[bin_mask].mean())
+                ORR_valid[i] = True
+            
+            else:
+                ORR_list[i].append(np.nan)  # Use NaN for clarity
+
+
+    # Compute statistics, skipping NaNs (mean after bootstrapping)
+    ORR_mean = [np.nanmean(x) if ORR_valid[i] else np.nan
+                for i, x in enumerate(ORR_list)]
+    # Add the 95% confidence interval
+    ORR_05 = [np.nanquantile(x, 0.05) if ORR_valid[i] else np.nan
+              for i, x in enumerate(ORR_list)]
+    ORR_95 = [np.nanquantile(x, 0.95) if ORR_valid[i] else np.nan
+              for i, x in enumerate(ORR_list)]
+
+    # Forward-fill to smooth the line
+    # Instead of having drops when there are no samples, we hold at
+    # the previous point
+    def forward_fill(arr):
+        filled = []
+        last_val = np.nan
+        for val in arr:
+            if not np.isnan(val):
+                last_val = val
+            filled.append(last_val)
+        return filled
+
+    ORR_mean = forward_fill(ORR_mean)
+    ORR_05 = forward_fill(ORR_05)
+    ORR_95 = forward_fill(ORR_95)
+
+
+    # Plot
+    _, ax = plt.subplots(figsize=(3.5, 3))
+    ax.plot(score_list, ORR_mean, '-', color='r', label='Mean')
+    ax.fill_between(score_list, ORR_05, ORR_95, color='r', alpha=0.25)
+
+    # Add shading
+    ax.axvspan(0, 0.3, facecolor='grey', alpha=0.2)   # Grey left region
+    ax.axvspan(0.7, 1.0, facecolor='green', alpha=0.2)  # Green right region
+
+    ax.set_ylabel("Response probability (%)")
+    ax.set_xlabel(xlabel)
+
+    ax.set_ylim([-0.02, 1.02])
+    ax.set_yticks([0, 0.25, 0.5, 0.75, 1])
+    ax.set_yticklabels([0, 25, 50, 75, 100])
+    ax.set_xlim([0, 1])
+    ax.set_xticks([0, 0.2, 0.4, 0.6, 0.8, 1])
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.plot([0, 1], [0, 1], '--',color='red', linewidth=1, label='y = x')
+
     plt.tight_layout()
     plt.show()
-
-
-# NOTE: needed?
-# def patient_prediction(patient):
-#     cond_features = ['TMB', 'Albumin', 'NLR', 'Age', 'Systemic_therapy_history',
-#                 'CancerType1', 'CancerType2', 'CancerType3', 'CancerType4',
-#                 'CancerType5', 'CancerType6', 'CancerType7', 'CancerType8',
-#                 'CancerType9', 'CancerType10', 'CancerType11', 'CancerType12',
-#                 'CancerType13', 'CancerType14', 'CancerType15', 'CancerType16']
-#     cond_data_scaled_tt= scale_input(patient,cond_features,"MinMax")
-#     cond_data_scaled_lr= scale_input(patient,cond_features,"Standard")
-#     discr_steps = int(1e5)
-
-#     distr= get_distribution(
-#         mps=tn_model,
-#         cond_features=cond_features,
-#         cond_data=cond_data_scaled_tt,
-#         marg_features=marg_features,
-#         in_features=featuresNA,
-#         out_feature=phenoNA,
-#         num_features=numeric_featuresNA,
-#         n_classes=n_classes,
-#         phys_dim=phys_dim,
-#         discr_steps=discr_steps
-#     )[0][1]
-
-#     loris=loris_scaled(cond_data_scaled_lr)
-
-#     return round(float(loris),4),round(float(distr),4)
-
-if __name__ == '__main__':
-    # cwd = os.path.join(cwd, 'loris/code')
-
-    # "model_name" should be 'llr6' or 'nn2'
-    model_name = 'llr6'
-    n_classes = 2
-
-
-    # Load data
-    # ---------
-    featuresNA = ['TMB', 'Albumin', 'NLR', 'Age', 'Systemic_therapy_history',
-                  'CancerType1', 'CancerType2', 'CancerType3', 'CancerType4',
-                  'CancerType5', 'CancerType6', 'CancerType7', 'CancerType8',
-                  'CancerType9', 'CancerType10', 'CancerType11', 'CancerType12',
-                  'CancerType13', 'CancerType14', 'CancerType15', 'CancerType16']
-    phenoNA = 'Response'
-
-    numeric_featuresNA = ['TMB', 'Albumin', 'NLR', 'Age']
-
-    datasets = ['Chowell_train', 'Chowell_test', 'MSK1', 'MSK2', 'Shim_NSCLC',
-                'Kato_panCancer', 'Vanguri_NSCLC', 'Ravi_NSCLC', 'Pradat_panCancer']
-    
-    scaler_type = 'MinMax'
-    # scaler_type = 'Standard'
-
-    dataset = 'Chowell_train'
-    data_train = load_data(featuresNA, phenoNA, dataset, scaler_type)
-
-    dataset = 'Chowell_test'
-    data_test = load_data(featuresNA, phenoNA, dataset, scaler_type)
-
-
-    # Train model
-    # -----------
-    x_train = data_train[featuresNA].values
-    y_train = data_train[phenoNA].values
-
-    x_test = data_test[featuresNA].values
-    y_test = data_test[phenoNA].values
-
-    print('\n* TRAINING MODEL:')
-    model = train_model(model_name, x_train, y_train, x_test, y_test)
-
-
-    # Tensorize model
-    # ---------------
-    xt_train = torch.from_numpy(x_train).float()
-    yt_train = torch.from_numpy(y_train)
-
-    xt_test = torch.from_numpy(x_test).float()
-    yt_test = torch.from_numpy(y_test)
-
-    # sketch_size could be chosen smaller, e.g., sketch_size = 50, and the
-    # tensorization will be much faster returning a tn_model with the same accuracy,
-    # but sometimes this could lead to having negative values for inputs with low
-    # probability. Choosing a bigger sketch_size usually avoids these errors.
-    sketch_size    = 200
-    phys_dim       = 2
-    domain         = torch.linspace(0, 1, phys_dim)
-    bond_dim       = 2
-    cum_percentage = 1 - 1e-2
-    batch_size     = 500
-    device         = torch.device('cpu')
-    verbose        = False
-
-    print('* TENSORIZING MODEL:')
-    tn_model = tensorize(model=model,
-                         x_train=xt_train,
-                         y_train=yt_train,
-                         x_test=xt_test,
-                         y_test=yt_test,
-                         sketch_size=sketch_size,
-                         phys_dim=phys_dim,
-                         domain=domain,
-                         bond_dim=bond_dim,
-                         cum_percentage=cum_percentage,
-                         batch_size=batch_size,
-                         device=device,
-                         verbose=verbose)
-
-
-    # Renormalize model
-    # -----------------
-
-    # We renormalize the tensor network so that it represents a normalized
-    # distribution of all the features, instead of only giving normalized
-    # conditional distributions for the output feature ("Response")
-
-    # Contiuous variables have to be integrated. "discr_steps" indicates the number
-    # of dicretization steps used to discretize the continuous variable and perform
-    # numerical integration
-    discr_steps = int(1e5)
-
-    print('* RENORMALIZING TN MODEL:')
-    tn_model = renormalize(mps=tn_model,
-                           phys_dim=phys_dim,
-                           discr_steps=discr_steps,
-                           n_classes=n_classes,
-                           num_features=numeric_featuresNA,
-                           x_test=xt_test,
-                           y_test=yt_test)
-
-    #--------------Section 3.3: Efficeint Compuation Examples-------------------------
-
-    # TMB: We know TMB above 27 indicates better response
-    # cond_features = ['TMB']
-
-    low=marginal_prediction(5,['TMB'])
-    mid=marginal_prediction(27,['TMB'])
-    high=marginal_prediction(50,['TMB'])
-
-    print('TMB Example:')
-    print(f'TT Score: {low,mid,high}')
-    print()
-
-    # Age: We know Age has a small impact on response
-    low=marginal_prediction(30,['Age'])
-    mid=marginal_prediction(50,['Age'])
-    high=marginal_prediction(80,['Age'])
-    print('Age Example:')
-    # print(marg_feat_order, distr.shape)
-    print(f'TT Score: {low,mid,high}')
-    print()
-
-    #PSTH: We know that history of treatemnt lowers effectiveness of treatment
-    cond_features = ['Systemic_therapy_history']
-    cond_data=[0]
-
-    marg_features = ['Response']
-
-    discr_steps = int(1e5)
-
-    distr1= get_distribution(
-        mps=tn_model,
-        cond_features=cond_features,
-        cond_data=cond_data,
-        marg_features=marg_features,
-        in_features=featuresNA,
-        out_feature=phenoNA,
-        num_features=numeric_featuresNA,
-        n_classes=n_classes,
-        phys_dim=phys_dim,
-        discr_steps=discr_steps
-    )[0][1]
-
-    cond_features = ['Systemic_therapy_history']
-    cond_data=[1]
-
-    marg_features = ['Response']
-
-    discr_steps = int(1e5)
-
-    distr2= get_distribution(
-        mps=tn_model,
-        cond_features=cond_features,
-        cond_data=cond_data,
-        marg_features=marg_features,
-        in_features=featuresNA,
-        out_feature=phenoNA,
-        num_features=numeric_featuresNA,
-        n_classes=n_classes,
-        phys_dim=phys_dim,
-        discr_steps=discr_steps
-    )[0][1]
-
-    print('PSTH Example:')
-    # print(marg_feat_order, distr.shape)
-    print(f'TT Score: {round(float(distr1),4),round(float(distr2),4)}')
-    print()
-
-
-
-#---------------Individual Patient Predictions------------------------------
-        
-
-#Patient 1:Cancer: Melanoma History: No Age: 64 Albumin: 4.8 g l−1
-#NLR: 4.7 PD-L1: – TMB: 21 mut per Mb
-#Scaled/Converetd: Cancer: 8/16=0.5 History: 0 Age: 64/85=0.753 Albumin: 4.8
-#NLR: 4.7/25: – TMB: 21/50
-
-    cond_data_unscaled = [21, 4.8, 4.7, 64, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]
-    loris, distr=patient_prediction(cond_data_unscaled)
-    print('Patient 1:')
-    print(f'TT Score: {distr}, LORIS score: {loris}')
-    print()
-
-
-#Patient 2: Cancer: NSCLC, PSTH:Yes, Age:50, Albumin:3.5, NLR=6.3,TMB: 8
-
-    cond_data_unscaled = [8,3.5,6.3,50,1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0]
-    loris, distr=patient_prediction(cond_data_unscaled)
-    print('Patient 2:')
-    print(f'TT Score: {distr}, LORIS score: {loris}')
-    print()
-
-#Patient 3:Cancer: Breast History: No Age: 42 Albumin: 4.6
-#NLR: 2.3 PD-L1: – TMB:5
-
-    cond_data_unscaled = [5,4.6,2.3,42,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
-    loris, distr=patient_prediction(cond_data_unscaled)
-    print('Patient 3:')
-    print(f'TT Score: {distr}, LORIS score: {loris}')
-    print()
-
-
-    #--------------Feature Sensitivity------------------------
-
-    sensitivity_bar_plot()
