@@ -451,10 +451,10 @@ def feature_sensitivity_cond(feature, model, x_train, features, scalers_dict):
                      scalers_dict['NLR'].mean_,
                      scalers_dict['Age'].mean_, 1] + [0] * (len(features) - 5)
     except:
-        base_data = [scalers_dict['TMB'].min_,
-                     scalers_dict['Albumin'].min_,
-                     scalers_dict['NLR'].min_,
-                     scalers_dict['Age'].min_, 1] + [0] * (len(features) - 5)
+        base_data = [scalers_dict['TMB'].data_min_,
+                     scalers_dict['Albumin'].data_min_,
+                     scalers_dict['NLR'].data_min_,
+                     scalers_dict['Age'].data_min_, 1] + [0] * (len(features) - 5)
     base_data_scaled = scale_input(base_data, features, scalers_dict)
     base_data_scaled = torch.tensor(base_data_scaled).unsqueeze(0)
 
@@ -552,10 +552,10 @@ def feature_sensitivity_coeffs(feature, model, x_train, features, scalers_dict):
                      scalers_dict['NLR'].mean_,
                      scalers_dict['Age'].mean_, 1] + [0] * (len(features) - 5)
     except:
-        base_data = [scalers_dict['TMB'].min_,
-                     scalers_dict['Albumin'].min_,
-                     scalers_dict['NLR'].min_,
-                     scalers_dict['Age'].min_, 1] + [0] * (len(features) - 5)
+        base_data = [scalers_dict['TMB'].data_min_,
+                     scalers_dict['Albumin'].data_min_,
+                     scalers_dict['NLR'].data_min_,
+                     scalers_dict['Age'].data_min_, 1] + [0] * (len(features) - 5)
     base_data_scaled = scale_input(base_data, features, scalers_dict)
     base_data_scaled = torch.tensor(base_data_scaled).unsqueeze(0)
     
