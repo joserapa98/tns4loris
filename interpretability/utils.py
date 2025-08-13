@@ -21,40 +21,7 @@ cwd = os.getcwd()
 
 #--------------------- Load and scale data --------------------
 
-def data_scaler(data, features, num_features, scaler_type):
-    data_scaled = copy.deepcopy(data)
-    if scaler_type == 'Standard':
-        scaler_class = StandardScaler
-    elif scaler_type == 'MinMax':
-        scaler_class = MinMaxScaler
-    else:
-        raise ValueError(f'Unrecognized scaler type of {scaler_type}. '
-                         'Only "Standard" and "MinMax" are accepted.')
-    scalers_dict = {}
-    for feature in num_features:
-        scaler = scaler_class()
-        data_scaled[feature] = scaler.fit_transform(data[[feature]])
-        scalers_dict[feature] = scaler
-    df_data_scaled = pd.DataFrame(data_scaled, columns=features)
-    return df_data_scaled, scalers_dict
-
-
-def scale_input(patient, features, scalers_dict):
-    """
-    Takes in a list of features and their names and scales each one using
-    the corresponding scaler fit to Chowell train data.
-    """
-    patient_df= pd.DataFrame([patient], columns=features)
-    
-    for feature in patient_df.columns:
-        if feature in scalers_dict:
-            patient_df[feature] = scalers_dict[feature].transform(patient_df[[feature]])
-    
-    patient_list = patient_df.iloc[0].tolist()
-    return patient_list
-
-
-def load_data(cwd, in_features, out_feature, num_features, dataset, scaler_type):
+def load_data(cwd, in_features, out_feature, dataset, scaler_type):
     data_file = os.path.join(cwd, 'loris', '02.Input', 'AllData.xlsx')
 
     # Data truncation
@@ -72,12 +39,37 @@ def load_data(cwd, in_features, out_feature, num_features, dataset, scaler_type)
     all_features = in_features + [out_feature]
     data_no_nans = data[all_features].dropna(axis=0)
     
-    all_data, scalers_dict = data_scaler(data_no_nans,
-                                         all_features,
-                                         num_features,
-                                         scaler_type)
+    data_scaled = copy.deepcopy(data_no_nans)
+
+    if scaler_type == 'Standard':
+        scaler_class = StandardScaler
+    elif scaler_type == 'MinMax':
+        scaler_class = MinMaxScaler
+    else:
+        raise ValueError(f'Unrecognized scaler type of {scaler_type}. '
+                         'Only "Standard" and "MinMax" are accepted.')
     
-    return all_data, scalers_dict
+    scalers_dict = {}
+    for feature in in_features:
+        scaler = scaler_class()
+        data_scaled[feature] = scaler.fit_transform(data[[feature]])
+        scalers_dict[feature] = scaler
+    
+    return data_scaled, scalers_dict
+
+
+def scale_input(patient, features, scalers_dict):
+    """
+    Takes in a list of features and their names and scales each one using
+    the corresponding scaler fit to Chowell train data.
+    """
+    patient_df = pd.DataFrame([patient], columns=features)
+    
+    for feature in patient_df.columns:
+        patient_df[feature] = scalers_dict[feature].transform(patient_df[[feature]])
+    
+    patient_list = patient_df.iloc[0].tolist()
+    return patient_list
 
 
 #------------------ Train LR model ------------------------------------
@@ -446,43 +438,26 @@ def feature_sensitivity_cond(feature, model, x_train, features, scalers_dict):
     for each feature. The feature of interest is perturbed in its domain.
     """
     try:
-        base_data = [scalers_dict['TMB'].mean_,
-                     scalers_dict['Albumin'].mean_,
-                     scalers_dict['NLR'].mean_,
-                     scalers_dict['Age'].mean_, 1] + [0] * (len(features) - 5)
+        base_data = [scalers_dict[feat].mean_ for feat in features]
     except:
-        base_data = [scalers_dict['TMB'].data_min_,
-                     scalers_dict['Albumin'].data_min_,
-                     scalers_dict['NLR'].data_min_,
-                     scalers_dict['Age'].data_min_, 1] + [0] * (len(features) - 5)
+        base_data = [scalers_dict[feat].data_min_ for feat in features]
     base_data_scaled = scale_input(base_data, features, scalers_dict)
     base_data_scaled = torch.tensor(base_data_scaled).unsqueeze(0)
 
     yvals = []
     
-    if feature == 'CancerType':
-        for i in [5, len(base_data) - 1]:
-            cond_data = base_data_scaled.clone()
-            cond_data[0, i] = 1  # set 1 at the current position (others remain 0 from index 5 onward)
-            
-            result = model(cond_data).detach()
-            score = result / result.sum(dim=1, keepdim=True)
-            score = score[0, 1]
-            yvals.append(score)
-
-    else:
-        feat_idx = features.index(feature)
-        for limit in ['min', 'max']:
-            cond_data = base_data_scaled.clone()
-            if limit == 'min':
-                cond_data[0, feat_idx] = x_train[:, feat_idx].min()
-            elif limit == 'max':
-                cond_data[0, feat_idx] = x_train[:, feat_idx].max()
-            
-            result = model(cond_data).detach()
-            score = result / result.sum(dim=1, keepdim=True)
-            score = score[0, 1]
-            yvals.append(score)
+    feat_idx = features.index(feature)
+    for limit in ['min', 'max']:
+        cond_data = base_data_scaled.clone()
+        if limit == 'min':
+            cond_data[0, feat_idx] = x_train[:, feat_idx].min()
+        elif limit == 'max':
+            cond_data[0, feat_idx] = x_train[:, feat_idx].max()
+        
+        result = model(cond_data).detach()
+        score = result / result.sum(dim=1, keepdim=True)
+        score = score[0, 1]
+        yvals.append(score)
 
     return yvals[-1] - yvals[0]
 
@@ -497,45 +472,27 @@ def feature_sensitivity_marg(feature, mps, in_features, out_feature,
     """
     yvals = []
     
-    if feature == 'CancerType':
-        for idx in ['1', '16']:
-            score = marginal_prediction(
-                mps=mps,
-                cond_feature=feature+idx,
-                cond_data=1,
-                in_features=in_features,
-                out_feature=out_feature,
-                num_features=num_features,
-                n_classes=n_classes,
-                phys_dim=phys_dim,
-                x_train=x_train,
-                discr_steps=discr_steps,
-                scalers_dict=scalers_dict)
-            
-            yvals.append(score)
-
-    else:
-        feat_idx = in_features.index(feature)
-        for limit in ['min', 'max']:
-            if limit == 'min':
-                cond_data = float(x_train[:, feat_idx].min())
-            elif limit == 'max':
-                cond_data = float(x_train[:, feat_idx].max())
-            
-            score = marginal_prediction(
-                mps=mps,
-                cond_feature=feature,
-                cond_data=cond_data,
-                in_features=in_features,
-                out_feature=out_feature,
-                num_features=num_features,
-                n_classes=n_classes,
-                phys_dim=phys_dim,
-                x_train=x_train,
-                discr_steps=discr_steps,
-                scalers_dict=scalers_dict)
-            
-            yvals.append(score)
+    feat_idx = in_features.index(feature)
+    for limit in ['min', 'max']:
+        if limit == 'min':
+            cond_data = float(x_train[:, feat_idx].min())
+        elif limit == 'max':
+            cond_data = float(x_train[:, feat_idx].max())
+        
+        score = marginal_prediction(
+            mps=mps,
+            cond_feature=feature,
+            cond_data=cond_data,
+            in_features=in_features,
+            out_feature=out_feature,
+            num_features=num_features,
+            n_classes=n_classes,
+            phys_dim=phys_dim,
+            x_train=x_train,
+            discr_steps=discr_steps,
+            scalers_dict=scalers_dict)
+        
+        yvals.append(score)
 
     return yvals[-1] - yvals[0]
 
@@ -547,15 +504,9 @@ def feature_sensitivity_coeffs(feature, model, x_train, features, scalers_dict):
     is perturbed in its domain.
     """
     try:
-        base_data = [scalers_dict['TMB'].mean_,
-                     scalers_dict['Albumin'].mean_,
-                     scalers_dict['NLR'].mean_,
-                     scalers_dict['Age'].mean_, 1] + [0] * (len(features) - 5)
+        base_data = [scalers_dict[feat].mean_ for feat in features]
     except:
-        base_data = [scalers_dict['TMB'].data_min_,
-                     scalers_dict['Albumin'].data_min_,
-                     scalers_dict['NLR'].data_min_,
-                     scalers_dict['Age'].data_min_, 1] + [0] * (len(features) - 5)
+        base_data = [scalers_dict[feat].data_min_ for feat in features]
     base_data_scaled = scale_input(base_data, features, scalers_dict)
     base_data_scaled = torch.tensor(base_data_scaled).unsqueeze(0)
     
@@ -656,7 +607,7 @@ def response_curve(model, x_train, y_train, xlabel,
     ax.axvspan(0, 0.3, facecolor='grey', alpha=0.2)   # Grey left region
     ax.axvspan(0.7, 1.0, facecolor='green', alpha=0.2)  # Green right region
 
-    ax.set_ylabel("Response probability (%)")
+    ax.set_ylabel("Response probability (\%)")
     ax.set_xlabel(xlabel)
 
     ax.set_ylim([-0.02, 1.02])
@@ -669,4 +620,4 @@ def response_curve(model, x_train, y_train, xlabel,
     ax.plot([0, 1], [0, 1], '--',color='red', linewidth=1, label='y = x')
 
     plt.tight_layout()
-    plt.show()
+    return ax
