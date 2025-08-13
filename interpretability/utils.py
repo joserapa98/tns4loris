@@ -6,6 +6,7 @@ from sklearn import linear_model
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.metrics import accuracy_score, balanced_accuracy_score
+from sklearn.model_selection import RepeatedStratifiedKFold
 
 import pandas as pd
 import numpy as np
@@ -100,9 +101,31 @@ def create_model(model_name):
     return model
 
 
-def train_model(model_name, x_train, y_train, x_test, y_test):
+def train_model(model_name, train_procedure, x_train, y_train, x_test, y_test):
     model = create_model(model_name)
-    model.fit(x_train, y_train)
+    
+    if train_procedure == 'vanilla':
+        model.fit(x_train, y_train)
+    
+    elif train_procedure == 'average':
+        all_coefs = []
+        all_inters = []
+        kf = RepeatedStratifiedKFold(n_splits=5,
+                                     n_repeats=20)
+        
+        for train_idx, _ in kf.split(x_train, y_train):
+            model.fit(x_train[train_idx], y_train[train_idx])
+            all_coefs.append(model.coef_)
+            all_inters.append(model.intercept_)
+        
+        all_coefs = np.vstack(all_coefs)
+        all_inters = np.hstack(all_inters)
+        
+        model.coef_ = np.mean(all_coefs, axis=0)
+        model.intercept_ = np.mean(all_inters)
+            
+    else:
+        raise ValueError('`train_procedure` should be "vanilla" or "average"')
     
     train_acc = accuracy_score(y_train, model.predict(x_train))
     test_acc = accuracy_score(y_test, model.predict(x_test))
