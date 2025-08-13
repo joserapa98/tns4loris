@@ -40,22 +40,6 @@ def all_combinations(lst):
                                     for r in range(1, len(lst) + 1)))
 
 
-def dataScaler(data, featuresNA, numeric_featuresNA, scaler_type):
-    data_scaled = copy.deepcopy(data)
-    if scaler_type == 'StandardScaler':
-        scaler = StandardScaler()
-    elif scaler_type == 'MinMax':
-        scaler = MinMaxScaler()
-    else:
-        raise Exception(
-            'Unrecognized scaler type of %s! '
-            'Only "sd" and "mM" are accepted.' % scaler_type)
-    for feature in numeric_featuresNA:
-        data_scaled[feature] = scaler.fit_transform(data[[feature]])
-    x = pd.DataFrame(data_scaled, columns=featuresNA)
-    return x
-
-
 def create_model(model_name, l1, C):
     if model_name == 'nn2':
         model_class = MLPClassifier
@@ -81,7 +65,7 @@ def create_model(model_name, l1, C):
     return model_class, param_dict
 
 
-def load_data(featuresNA, phenoNA, datasets, datasets_ids, scaler_type):
+def load_data(featuresNA, phenoNA, datasets, datasets_ids):
     data_dir = os.path.join(cwd, 'loris', '02.Input')
     data_file = os.path.join(data_dir, 'AllData.xlsx')
 
@@ -107,11 +91,7 @@ def load_data(featuresNA, phenoNA, datasets, datasets_ids, scaler_type):
     
     all_features = featuresNA + [phenoNA, 'Dataset', 'DatasetNum']
     data_no_nans = data_all_raw[all_features].dropna(axis=0)
-    
-    # all_data = dataScaler(data_no_nans, all_features, featuresNA, scaler_type)
-    all_data = data_no_nans
-    
-    return all_data
+    return data_no_nans
 
 
 if __name__ == '__main__':
