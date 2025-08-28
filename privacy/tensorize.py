@@ -3,26 +3,21 @@
 import sys
 import os
 import getopt
-import copy
 import joblib
 import json
 
 from collections import Counter
-from itertools import chain, combinations
 
-from sklearn import linear_model
-from sklearn.neural_network import MLPClassifier
-from sklearn.model_selection import train_test_split, RepeatedStratifiedKFold
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.metrics import balanced_accuracy_score, roc_auc_score
 
-import pandas as pd
 import numpy as np
 import torch
 
 import tensorkrowch as tk
 from tensorkrowch.decompositions import tt_rss
 from tensorkrowch.utils import random_unitary
+
+from utils import *
 
 
 cwd = os.getcwd()
@@ -33,65 +28,6 @@ if torch.cuda.is_available():
 else:
     print('GPU is not available')
     device = torch.device('cpu')
-
-
-def all_combinations(lst):
-    return list(chain.from_iterable(combinations(lst, r)
-                                    for r in range(1, len(lst) + 1)))
-
-
-def create_model(model_name, l1, C):
-    if model_name == 'nn2':
-        model_class = MLPClassifier
-        param_dict = {
-            'max_iter': 100,
-            'hidden_layer_sizes': (19, 19),
-            'activation': 'tanh',
-            'alpha': 1e-05,
-            'early_stopping': False
-        }
-        
-    elif model_name == 'llr6':
-        model_class = linear_model.LogisticRegression
-        param_dict = {
-            'solver': 'saga',
-            'penalty': 'elasticnet',
-            'max_iter': 100,
-            'l1_ratio': l1, #0.5, #1,
-            'class_weight': 'balanced',
-            'C': C, #1, #0.1
-        }
-    
-    return model_class, param_dict
-
-
-def load_data(featuresNA, phenoNA, datasets, datasets_ids):
-    data_dir = os.path.join(cwd, 'loris', '02.Input')
-    data_file = os.path.join(data_dir, 'AllData.xlsx')
-
-    # Data truncation
-    TMB_upper = 50
-    Age_upper = 85
-    NLR_upper = 25
-
-    dfs = []
-    for ds, dsid in zip(datasets, datasets_ids):
-        df = pd.read_excel(data_file, sheet_name=ds, index_col=0)
-        df['Dataset'] = ds
-        df['DatasetNum'] = dsid
-        
-        # Data truncation
-        df['TMB'] = [c if c < TMB_upper else TMB_upper for c in df['TMB']]
-        df['Age'] = [c if c < Age_upper else Age_upper for c in df['Age']]
-        df['NLR'] = [c if c < NLR_upper else NLR_upper for c in df['NLR']]
-        
-        dfs.append(df)
-
-    data_all_raw = pd.concat(dfs, axis=0)
-    
-    all_features = featuresNA + [phenoNA, 'Dataset', 'DatasetNum']
-    data_no_nans = data_all_raw[all_features].dropna(axis=0)
-    return data_no_nans
 
 
 if __name__ == '__main__':
@@ -146,9 +82,7 @@ if __name__ == '__main__':
               '\t1) <l1> => l1 regularization weight\n'
               '\t2) <C> => inverse of total regularization weight\n')
     
-    # NOTE: We're going to use llr6 only
-    # NOTE: We should use scaler_type = "standard"
-    model_name = 'llr6'
+    # We should use scaler_type = "standard"
     scaler_type = 'standard'
     model_type = 'vanilla' if options['vanilla'] else 'average'
     
@@ -164,43 +98,77 @@ if __name__ == '__main__':
                 'Kato_panCancer', 'Vanguri_NSCLC', 'Ravi_NSCLC', 'Pradat_panCancer']
     datasets_ids = list(range(1, len(datasets) + 1))
     
-    all_data = load_data(featuresNA, phenoNA, datasets, datasets_ids, scaler_type)
+    # Load all data
+    all_data = load_data(cwd, featuresNA, phenoNA, datasets, datasets_ids)
+    
+    x = all_data[featuresNA].values
+    y = all_data[phenoNA].values
+    z = all_data['DatasetNum'].values
+    
+    # Load sketch data
+    sketch_data = load_sketch_data(cwd, featuresNA, phenoNA, datasets, datasets_ids)
+    
+    # We tensorize using data from all datasets, sampling uniformly from a
+    # balanced set that contains the same number of samples for each cancer type,
+    # with both Response 0 and 1.
+    x_sketch = sketch_data[featuresNA].values
+    y_sketch = sketch_data[phenoNA].values
+    z_sketch = sketch_data['DatasetNum'].values
+    
+    xt_sketch = torch.from_numpy(x_sketch).float()
+    yt_sketch = torch.from_numpy(y_sketch)
+    zt_sketch = torch.from_numpy(z_sketch)
     
     # Tensorization hyperparameters
-    sketch_size    = 100
+    sketch_size    = 50
     phys_dim       = 2
     domain         = torch.linspace(0, 1, phys_dim) if scaler_type == 'minmax' else None
     bond_dim       = 2
-    cum_percentage = 1. # 1 - 1e-2
-    batch_size     = 500
+    cum_percentage = 1 - 1e-2
+    batch_size     = 1000
     device         = torch.device('cpu')
     verbose        = False
     
     def embedding(data):
         return tk.embeddings.poly(data, degree=phys_dim - 1).float()
     
-    x = all_data[featuresNA].values
-    y = all_data[phenoNA].values
-    z = all_data['DatasetNum'].values
-    y_z = np.array([f'{a}_{b}' for a, b in zip(y, z)])
+    # Initialize the model
+    model_class, param_dict = create_lr_model(1.0, 0.1)
+    model = model_class(**param_dict)
+    model.classes_ = np.array([0, 1])
     
-    # NOTE: We are tensorizing using samples from all datasets, should we only
-    # consider samples from the training dataset of each model?
-    _, x_sketch, _, y_sketch = train_test_split(x, y,
-                                                test_size=sketch_size,
-                                                shuffle=True,
-                                                stratify=y_z,
-                                                random_state=1)
-    xt_sketch = torch.from_numpy(x_sketch).float()
-    yt_sketch = torch.from_numpy(y_sketch)
+    def fn_model(data, n_bins=6):
+        # Get probabilities (numpy)
+        y_proba = model.predict_proba(data)
+        y_proba = torch.from_numpy(y_proba).float()
+
+        # Bin width
+        step = 1.0 / n_bins
+
+        # Compute bin index
+        bin_idx = torch.floor(y_proba / step)  # 0 ... n_bins-1
+
+        # Lower & upper edges of the bin
+        bin_low  = bin_idx * step
+        bin_high = bin_low + step
+
+        # Apply your rule:
+        #   if prob <= 0.5 → snap to lower edge
+        #   if prob > 0.5  → snap to upper edge
+        result = torch.where(y_proba <= 0.5, bin_low, bin_high)
+
+        # Clip to [0,1]
+        result = torch.clamp(result, 0.0, 1.0)
+
+        return result.sqrt()
     
     # Tensorize
-    models_dir = os.path.join(cwd, 'privacy', 'models',
-                              model_name, scaler_type, model_type)
+    models_dir = os.path.join(cwd, 'privacy', 'results', 'models',
+                              'lr', scaler_type, model_type)
     os.makedirs(models_dir, exist_ok=True)
     
-    tt_models_dir = os.path.join(cwd, 'privacy', 'tt_models',
-                                 model_name, scaler_type, model_type)
+    tt_models_dir = os.path.join(cwd, 'privacy', 'results', 'models',
+                                 'tt', scaler_type, model_type)
     os.makedirs(tt_models_dir, exist_ok=True)
     
     all_combs = all_combinations(datasets_ids)
@@ -224,34 +192,19 @@ if __name__ == '__main__':
             params = joblib.load(params_dir)
             
             # Split into weights and intercept
-            weights = params[:-1].numpy().reshape(1, -1)  # shape (1, n_features)
-            intercept = np.array([params[-1].item()])     # shape (1,)
-            
-            model_class, param_dict = create_model(model_name, l1, C)
-            
-            # Initialize the model
-            model = model_class(**param_dict)
-            model.fit(np.zeros((2, weights.shape[1])), [0, 1])  # dummy fit
+            weights = params[:-1].unsqueeze(0).numpy()  # shape (1, n_features)
+            intercept = params[-1:].numpy()             # shape (1,)
 
             # Manually set parameters
             model.coef_ = weights
             model.intercept_ = intercept
             
-            def fn_model(data):
-                result = torch.from_numpy(model.predict_proba(data)).float()
-                return result
-            
-            # def fn_model(data):
-            #     y_proba = model.predict_proba(data)
-            #     y_pred = (y_proba > 0.5)
-            #     result = torch.from_numpy(y_pred).float()
-            #     return result
-
             # Tensorization
+            rand_ids = torch.randperm(xt_sketch.size(0))[:sketch_size]
             cores = tt_rss(function=fn_model,
                            embedding=embedding,
-                           sketch_samples=xt_sketch,
-                           labels=yt_sketch,
+                           sketch_samples=xt_sketch[rand_ids],
+                           labels=yt_sketch[rand_ids],
                            domain_multiplier=1,
                            domain=domain,
                            rank=bond_dim,
@@ -296,7 +249,7 @@ if __name__ == '__main__':
                 for dat_id in datasets_ids:
                     idx = z == dat_id
                     x_aux = torch.from_numpy(x[idx]).float()
-                    y_proba = tt_model(embedding(x_aux))
+                    y_proba = tt_model(embedding(x_aux)).pow(2)
                     y_pred = (y_proba[:, 1] > 0.5).int()
                     
                     y_proba = y_proba.numpy()
