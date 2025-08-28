@@ -3,23 +3,19 @@
 import sys
 import os
 import getopt
-import copy
 import joblib
 import json
 
 from collections import Counter
-from itertools import chain, combinations
 
-from sklearn import linear_model
-from diffprivlib import models as dp_models
-from sklearn.neural_network import MLPClassifier
-from sklearn.model_selection import train_test_split, RepeatedStratifiedKFold
+from sklearn.model_selection import RepeatedStratifiedKFold
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.metrics import balanced_accuracy_score, roc_auc_score
 
-import pandas as pd
 import numpy as np
 import torch
+
+from utils import *
 
 
 cwd = os.getcwd()
@@ -32,77 +28,7 @@ else:
     device = torch.device('cpu')
 
 
-def move_to_cpu(obj):
-    if torch.is_tensor(obj):
-        return obj.cpu()
-    elif isinstance(obj, dict):
-        return {k: move_to_cpu(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [move_to_cpu(v) for v in obj]
-    elif isinstance(obj, tuple):
-        return tuple(move_to_cpu(v) for v in obj)
-    else:
-        return obj
-
-
-def all_combinations(lst):
-    return list(chain.from_iterable(combinations(lst, r)
-                                    for r in range(1, len(lst) + 1)))
-
-
-def create_model(model_name, epsilon):
-    if model_name == 'nn2':
-        model_type = MLPClassifier
-        param_dict = {
-            'max_iter': 200,
-            'hidden_layer_sizes': (19, 19),
-            'activation': 'tanh',
-            'alpha': 1e-05,
-            'early_stopping': False
-        }
-        
-    elif model_name == 'llr6':
-        model_type = dp_models.LogisticRegression
-        param_dict = {
-            'max_iter': 100,
-            'epsilon': epsilon,
-        }
-    
-    # model = model_type(**param_dict)
-    # return model
-    return model_type, param_dict
-
-
-def load_data(featuresNA, phenoNA, datasets, datasets_ids):
-    data_dir = os.path.join(cwd, 'loris', '02.Input')
-    data_file = os.path.join(data_dir, 'AllData.xlsx')
-
-    # Data truncation
-    TMB_upper = 50
-    Age_upper = 85
-    NLR_upper = 25
-
-    dfs = []
-    for ds, dsid in zip(datasets, datasets_ids):
-        df = pd.read_excel(data_file, sheet_name=ds, index_col=0)
-        df['Dataset'] = ds
-        df['DatasetNum'] = dsid
-        
-        # Data truncation
-        df['TMB'] = [c if c < TMB_upper else TMB_upper for c in df['TMB']]
-        df['Age'] = [c if c < Age_upper else Age_upper for c in df['Age']]
-        df['NLR'] = [c if c < NLR_upper else NLR_upper for c in df['NLR']]
-        
-        dfs.append(df)
-
-    data_all_raw = pd.concat(dfs, axis=0)
-    
-    all_features = featuresNA + [phenoNA, 'Dataset', 'DatasetNum']
-    data_no_nans = data_all_raw[all_features].dropna(axis=0)
-    return data_no_nans
-
-
-def train_vanilla(model_name, n_splits, n_repeats, scaler_type, epsilon,
+def train_vanilla(n_splits, n_repeats, scaler_type, epsilon,
                   all_data, featuresNA, phenoNA, datasets_ids):
     x = all_data[featuresNA].values
     y = all_data[phenoNA].values
@@ -110,8 +36,8 @@ def train_vanilla(model_name, n_splits, n_repeats, scaler_type, epsilon,
     y_z = np.array([f'{a}_{b}' for a, b in zip(y, z)])
     
     # Train
-    models_dir = os.path.join(cwd, 'privacy', 'dp_models',
-                              model_name, scaler_type, 'vanilla')
+    models_dir = os.path.join(cwd, 'privacy', 'results' 'models',
+                              'dp', scaler_type, 'vanilla')
     os.makedirs(models_dir, exist_ok=True)
     
     all_combs = all_combinations(datasets_ids)
@@ -119,8 +45,12 @@ def train_vanilla(model_name, n_splits, n_repeats, scaler_type, epsilon,
     for comb in all_combs:
         comb_dir = os.path.join(models_dir, '_'.join([str(c) for c in comb]))
         os.makedirs(comb_dir, exist_ok=True)
+        
+        # Comment if we want to restart the whole process or delete models
+        models_trained = len(os.listdir(comb_dir)) // 3  # params, results, scores
+        # models_trained = 0
             
-        model_type, param_dict = create_model(model_name, epsilon)
+        model_type, param_dict = create_dp_model(epsilon)
 
         # Define repeated k-fold cross-validation
         kf = RepeatedStratifiedKFold(n_splits=n_splits,
@@ -128,6 +58,9 @@ def train_vanilla(model_name, n_splits, n_repeats, scaler_type, epsilon,
 
         # Store results
         for i, (train_idx, _) in enumerate(kf.split(x, y_z)):
+            if i <= models_trained:
+                continue
+            
             x_train = x[train_idx]
             y_train = y[train_idx]
             z_train = z[train_idx]
@@ -149,37 +82,25 @@ def train_vanilla(model_name, n_splits, n_repeats, scaler_type, epsilon,
             model.fit(x_train, y_train)
             
             # Save model's parameters
-            if model_name == 'nn2':
-                coefs = [torch.from_numpy(c).flatten()
-                            for c in model.coefs_]
-                coefs = torch.cat(coefs)
-                intercepts = [torch.from_numpy(c).flatten()
-                                for c in model.intercepts_]
-                intercepts = torch.cat(intercepts)
-            else: #if model_name == 'llr6':
-                coefs = torch.from_numpy(model.coef_).flatten()
-                intercepts = torch.from_numpy(model.intercept_).flatten()
+            coefs = torch.from_numpy(model.coef_).flatten()
+            intercepts = torch.from_numpy(model.intercept_).flatten()
             
             params = torch.cat([coefs, intercepts])
             
             # Weight and range to rescale params
-            if model_name == 'llr6':
-                if scaler_type == "standard":
-                    scaler_info = {
-                        'mean': scaler.mean_,
-                        'scale': scaler.scale_
-                    }
-                elif scaler_type == "minmax":
-                    scaler_info = {
-                        'mean': scaler.data_min_,
-                        'scale': scaler.data_range_
-                    }
-                else:
-                    raise ValueError(
-                        'scaler_type must be "standard" or "minmax"')
+            if scaler_type == "standard":
+                scaler_info = {
+                    'mean': scaler.mean_,
+                    'scale': scaler.scale_
+                }
+            elif scaler_type == "minmax":
+                scaler_info = {
+                    'mean': scaler.data_min_,
+                    'scale': scaler.data_range_
+                }
             else:
                 raise ValueError(
-                    'model_name should be "llr6"')
+                    'scaler_type must be "standard" or "minmax"')
             
             mean = torch.from_numpy(scaler_info['mean'])
             scale = torch.from_numpy(scaler_info['scale'])
@@ -204,12 +125,8 @@ def train_vanilla(model_name, n_splits, n_repeats, scaler_type, epsilon,
             joblib.dump(params, params_dir)
 
             # Evaluate final model by dataset
-            if model_name == 'llr6':
-                model.coef_ = params[:-1].numpy()
-                model.intercept_ = params[-1].numpy()
-            else:
-                raise ValueError(
-                    '`model_name` should be "llr6"')
+            model.coef_ = params[:-1].numpy()
+            model.intercept_ = params[-1].numpy()
             
             bal_accs = {}
             auc_scores = {}
@@ -263,7 +180,7 @@ def train_vanilla(model_name, n_splits, n_repeats, scaler_type, epsilon,
 
 
 
-def train_average(model_name, n_splits, n_repeats, n_models, scaler_type, epsilon,
+def train_average(n_splits, n_repeats, n_models, scaler_type, epsilon,
                   all_data, featuresNA, phenoNA, datasets_ids):
     x = all_data[featuresNA].values
     y = all_data[phenoNA].values
@@ -271,8 +188,8 @@ def train_average(model_name, n_splits, n_repeats, n_models, scaler_type, epsilo
     y_z = np.array([f'{a}_{b}' for a, b in zip(y, z)])
     
     # Train
-    models_dir = os.path.join(cwd, 'privacy', 'dp_models',
-                              model_name, scaler_type, 'average')
+    models_dir = os.path.join(cwd, 'privacy', 'results', 'models',
+                              'dp', scaler_type, 'average')
     os.makedirs(models_dir, exist_ok=True)
     
     all_combs = all_combinations(datasets_ids)
@@ -281,19 +198,19 @@ def train_average(model_name, n_splits, n_repeats, n_models, scaler_type, epsilo
         comb_dir = os.path.join(models_dir, '_'.join([str(c) for c in comb]))
         os.makedirs(comb_dir, exist_ok=True)
         
-        # NOTE: comment if we want to restart the whole process or delete models
-        # models_trained = len(os.listdir(comb_dir)) // 3  # params, results, scores
-        models_trained = 0
+        # Comment if we want to restart the whole process or delete models
+        models_trained = len(os.listdir(comb_dir)) // 3  # params, results, scores
+        # models_trained = 0
         
         # This is where the loop begins (10000 iterations)
-        # NOTE: For each i, we train "n_splits * n_repeats" LRs and then
+        # For each i, we train "n_splits * n_repeats" LRs and then
         # average to return a single model
         for i in range(models_trained, n_models):
             all_params = []
             all_means = []
             all_scales = []
             
-            model_type, param_dict = create_model(model_name, epsilon)
+            model_type, param_dict = create_dp_model(epsilon)
 
             # Define repeated k-fold cross-validation
             kf = RepeatedStratifiedKFold(n_splits=n_splits,
@@ -323,37 +240,25 @@ def train_average(model_name, n_splits, n_repeats, n_models, scaler_type, epsilo
                 model.fit(x_train, y_train)
                 
                 # Save model's parameters
-                if model_name == 'nn2':
-                    coefs = [torch.from_numpy(c).flatten()
-                             for c in model.coefs_]
-                    coefs = torch.cat(coefs)
-                    intercepts = [torch.from_numpy(c).flatten()
-                                  for c in model.intercepts_]
-                    intercepts = torch.cat(intercepts)
-                else: #if model_name == 'llr6':
-                    coefs = torch.from_numpy(model.coef_).flatten()
-                    intercepts = torch.from_numpy(model.intercept_).flatten()
+                coefs = torch.from_numpy(model.coef_).flatten()
+                intercepts = torch.from_numpy(model.intercept_).flatten()
                 
                 all_params.append(torch.cat([coefs, intercepts]))
                 
                 # Weight and range to rescale params
-                if model_name == 'llr6':
-                    if scaler_type == "standard":
-                        scaler_info = {
-                            'mean': scaler.mean_,
-                            'scale': scaler.scale_
-                        }
-                    elif scaler_type == "minmax":
-                        scaler_info = {
-                            'mean': scaler.data_min_,
-                            'scale': scaler.data_range_
-                        }
-                    else:
-                        raise ValueError(
-                            'scaler_type must be "standard" or "minmax"')
+                if scaler_type == "standard":
+                    scaler_info = {
+                        'mean': scaler.mean_,
+                        'scale': scaler.scale_
+                    }
+                elif scaler_type == "minmax":
+                    scaler_info = {
+                        'mean': scaler.data_min_,
+                        'scale': scaler.data_range_
+                    }
                 else:
                     raise ValueError(
-                        'model_name should be "llr6"')
+                        'scaler_type must be "standard" or "minmax"')
                 
                 all_means.append(torch.from_numpy(scaler_info['mean']))
                 all_scales.append(torch.from_numpy(scaler_info['scale']))
@@ -388,12 +293,8 @@ def train_average(model_name, n_splits, n_repeats, n_models, scaler_type, epsilo
             joblib.dump(avg_params, params_dir)
 
             # Evaluate final model by dataset
-            if model_name == 'llr6':
-                model.coef_ = avg_params[:-1].numpy()
-                model.intercept_ = avg_params[-1].numpy()
-            else:
-                raise ValueError(
-                    'model_name should be "llr6"')
+            model.coef_ = avg_params[:-1].numpy()
+            model.intercept_ = avg_params[-1].numpy()
             
             bal_accs = {}
             auc_scores = {}
@@ -491,15 +392,12 @@ if __name__ == '__main__':
         print('One of the options "vanilla" and "average" should be chosen')
         sys.exit()
     
-    # NOTE: We're going to use llr6 only
-    model_name = 'llr6'
-    
     # VANILLA
     if options['vanilla']:
         if len(args) == 4:
             n_splits = int(args[0])   # 5
             n_repeats = int(args[1])  # 20
-            scaler_type = args[2]
+            scaler_type = args[2]     # standard / minmax
             epsilon = float(args[3])  # [0.01, 0.1, 1.0, 10.0, 100.0]
         else:
             print('In "vanilla" mode the following arguments should be passed:\n'
@@ -515,7 +413,7 @@ if __name__ == '__main__':
             n_splits = int(args[0])   # 3
             n_repeats = int(args[1])  # 20
             n_models = int(args[2])   # 100
-            scaler_type = args[3]
+            scaler_type = args[3]     # standard / minmax
             epsilon = float(args[4])  # [0.01, 0.1, 1.0, 10.0, 100.0]
         else:
             print('In "average" mode the following arguments should be passed:\n'
@@ -526,7 +424,7 @@ if __name__ == '__main__':
                   '\t5) <epsilon> => epsilon parameter of DP\n')
             sys.exit()
     
-    # NOTE: We should use scaler_type = "standard"
+    # We should use scaler_type = "standard"
     if scaler_type not in ['standard', 'minmax']:
         print(print('Scaler should be "standard" or "minmax"'))
         sys.exit()
@@ -543,12 +441,11 @@ if __name__ == '__main__':
                 'Kato_panCancer', 'Vanguri_NSCLC', 'Ravi_NSCLC', 'Pradat_panCancer']
     datasets_ids = list(range(1, len(datasets) + 1))
     
-    all_data = load_data(featuresNA, phenoNA, datasets, datasets_ids, scaler_type)
+    all_data = load_data(cwd, featuresNA, phenoNA, datasets, datasets_ids)
     
     # VANILLA
     if options['vanilla']:
-        train_vanilla(model_name=model_name,
-                      n_splits=n_splits,
+        train_vanilla(n_splits=n_splits,
                       n_repeats=n_repeats,
                       scaler_type=scaler_type,
                       epsilon=epsilon,
@@ -558,8 +455,7 @@ if __name__ == '__main__':
                       datasets_ids=datasets_ids)
     # AVERAGE
     else:
-        train_average(model_name=model_name,
-                      n_splits=n_splits,
+        train_average(n_splits=n_splits,
                       n_repeats=n_repeats,
                       n_models=n_models,
                       scaler_type=scaler_type,
