@@ -85,6 +85,8 @@ if __name__ == '__main__':
     # We should use scaler_type = "standard"
     scaler_type = 'standard'
     model_type = 'vanilla' if options['vanilla'] else 'average'
+    n_splits = 5
+    n_repeats = 20
     
     # Load data
     featuresNA = ['TMB', 'Systemic_therapy_history', 'Albumin', 'NLR', 'Age',

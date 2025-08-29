@@ -26,12 +26,10 @@
 
 2. Train vanilla/average private LR models:
     ```
-    python privacy/train_lr_priv.py --<model_type> <n_splits> <n_repeats> <l1> <C>
+    python privacy/train_lr_priv.py --<model_type> <l1> <C>
     ```
 
     - ``model_type = "vanilla", "average"``
-    - ``n_splits = 5``
-    - ``n_repeats = 20``
     - ``l1 = 0.0, 0.5, 1.0``
     - ``C = 0.1, 1.0, 10.0``
 
