@@ -37,7 +37,7 @@ def train_vanilla(n_splits, n_repeats, scaler_type, epsilon,
     
     # Train
     models_dir = os.path.join(cwd, 'privacy', 'results' 'models',
-                              'dp', scaler_type, 'vanilla')
+                              'lr_dp', scaler_type, 'vanilla')
     os.makedirs(models_dir, exist_ok=True)
     
     all_combs = all_combinations(datasets_ids)
@@ -50,7 +50,7 @@ def train_vanilla(n_splits, n_repeats, scaler_type, epsilon,
         models_trained = len(os.listdir(comb_dir)) // 3  # params, results, scores
         # models_trained = 0
             
-        model_type, param_dict = create_dp_model(epsilon)
+        model_type, param_dict = create_lr_dp_model(epsilon)
 
         # Define repeated k-fold cross-validation
         kf = RepeatedStratifiedKFold(n_splits=n_splits,
@@ -189,7 +189,7 @@ def train_average(n_splits, n_repeats, n_models, scaler_type, epsilon,
     
     # Train
     models_dir = os.path.join(cwd, 'privacy', 'results', 'models',
-                              'dp', scaler_type, 'average')
+                              'lr_dp', scaler_type, 'average')
     os.makedirs(models_dir, exist_ok=True)
     
     all_combs = all_combinations(datasets_ids)
@@ -210,7 +210,7 @@ def train_average(n_splits, n_repeats, n_models, scaler_type, epsilon,
             all_means = []
             all_scales = []
             
-            model_type, param_dict = create_dp_model(epsilon)
+            model_type, param_dict = create_lr_dp_model(epsilon)
 
             # Define repeated k-fold cross-validation
             kf = RepeatedStratifiedKFold(n_splits=n_splits,
