@@ -116,7 +116,7 @@ def create_lr_model(l1, C):
     return model_type, param_dict
 
 
-def create_dp_model(epsilon):
+def create_lr_dp_model(epsilon):
     model_type = dp_models.LogisticRegression
     param_dict = {
         'max_iter': 100,
