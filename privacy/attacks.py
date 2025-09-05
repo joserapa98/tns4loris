@@ -744,32 +744,6 @@ if __name__ == '__main__':
                                   scaler_type=scaler_type,
                                   model_type=model_type)
     
-    # Remove models with low accuracies
-    if model_name == 'lr_dp':
-        lower_bound = 0.5
-        
-        epsilon_list = [0.01, 0.1, 1.0, 10.0, 100.0, float('inf')]
-        for i in range(len(epsilon_list)):
-            # idx = (data['bal_accs'][i] > lower_bound).all(dim=1)
-            idx = (data['bal_accs'][i][:, -1] > lower_bound)
-            
-            data = {key: [lst[idx] if j == i else lst
-                          for j, lst in enumerate(value)]
-                    for key, value in data.items()}
-    else:
-        lower_bound = 0.64
-
-        # idx = (data['bal_accs'] >= lower_bound).all(dim=1)
-        idx = (data['bal_accs'][:, -1] >= lower_bound)
-        
-        # TODO: remove if there is no NaNs
-        # Mask for rows that do NOT contain NaNs
-        # mask = ~torch.any(torch.isnan(all_params_lr), dim=1)
-        # print('mask:', mask.sum(), len(mask))
-        # idx = idx * mask
-        
-        data = {key: value[idx] for key, value in data.items()}
-    
     print('\n* Performing attacks...')
     if attack_type == 'bb':
         if model_name == 'lr_dp':
