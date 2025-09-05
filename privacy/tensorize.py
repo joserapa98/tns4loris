@@ -161,9 +161,9 @@ if __name__ == '__main__':
             print(comb, C, l1, i)
             
             cores_dir = os.path.join(tt_comb_dir,
-                                     f'{C}_{l1}_{i}_cores.pkl')
+                                     f'{C}_{l1}_{i}_cores.pt')
             resc_cores_dir = os.path.join(tt_comb_dir,
-                                          f'{C}_{l1}_{i}_resc_cores.pkl')
+                                          f'{C}_{l1}_{i}_resc_cores.pt')
             bal_accs_dir = os.path.join(tt_comb_dir,
                                         f'{C}_{l1}_{i}_bal_accs.json')
             auc_scores_dir = os.path.join(tt_comb_dir,
