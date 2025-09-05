@@ -15,10 +15,6 @@ from sklearn.metrics import balanced_accuracy_score, roc_auc_score
 import numpy as np
 import torch
 
-import tensorkrowch as tk
-from tensorkrowch.decompositions import tt_rss
-from tensorkrowch.utils import random_unitary
-
 from utils import *
 
 
@@ -111,31 +107,29 @@ if __name__ == '__main__':
     y_z = np.array([f'{a}_{b}' for a, b in zip(y, z)])
     
     # Train
-    models_dir = os.path.join(cwd, 'privacy', 'results', 'models',
-                              'lr_priv', scaler_type, model_type)
-    os.makedirs(models_dir, exist_ok=True)
-    
     aux_models_dir = os.path.join(cwd, 'privacy', 'results', 'models',
                                   'lr', scaler_type, model_type)
-    os.makedirs(models_dir, exist_ok=True)
+    os.makedirs(aux_models_dir, exist_ok=True)
+    
+    priv_models_dir = os.path.join(cwd, 'privacy', 'results', 'models',
+                                   'lr_priv', scaler_type, model_type)
+    os.makedirs(priv_models_dir, exist_ok=True)
     
     # Initialize the aux model
-    aux_model_class, param_dict = create_lr_model(1.0, 0.1)
-    aux_model = aux_model_class(**param_dict)
+    aux_model_class, aux_param_dict = create_lr_model(1.0, 0.1)
+    aux_model = aux_model_class(**aux_param_dict)
     aux_model.classes_ = np.array([0, 1])
     
     all_combs = all_combinations(datasets_ids)
     
     for comb in all_combs:
-        comb_dir = os.path.join(models_dir, '_'.join([str(c) for c in comb]))
-        os.makedirs(comb_dir, exist_ok=True)
-        
-        aux_comb_dir = os.path.join(aux_models_dir, '_'.join([str(c) for c in comb]))
+        aux_comb_dir = os.path.join(aux_models_dir,
+                                    '_'.join([str(c) for c in comb]))
         os.makedirs(aux_comb_dir, exist_ok=True)
         
-        # Comment if we want to restart the whole process or delete models
-        models_trained = len(os.listdir(comb_dir)) // 3  # params, results, scores
-        # models_trained = 0
+        priv_comb_dir = os.path.join(priv_models_dir,
+                                     '_'.join([str(c) for c in comb]))
+        os.makedirs(priv_comb_dir, exist_ok=True)
             
         model_class, param_dict = create_lr_model(l1, C)
 
@@ -145,7 +139,37 @@ if __name__ == '__main__':
 
         # Store results
         for i, (train_idx, _) in enumerate(kf.split(x, y_z)):
-            if i <= models_trained:
+            print(comb, C, l1, i)
+            
+            priv_params_dir = os.path.join(priv_comb_dir,
+                                           f'{C}_{l1}_{i}_params.pkl')
+            resc_priv_params_dir = os.path.join(priv_comb_dir,
+                                                f'{C}_{l1}_{i}_resc_params.pkl')
+            bal_accs_dir = os.path.join(priv_comb_dir,
+                                        f'{C}_{l1}_{i}_bal_accs.json')
+            auc_scores_dir = os.path.join(priv_comb_dir,
+                                          f'{C}_{l1}_{i}_auc_scores.json')
+            results_dir = os.path.join(priv_comb_dir,
+                                       f'{C}_{l1}_{i}_results.pkl')
+            
+            if os.path.exists(priv_params_dir):
+                # Check if resc_params, bal_accs, auc_scores and results dirs exist
+                if not os.path.exists(resc_priv_params_dir):
+                    raise ValueError(f'`resc_params` dir doesn\'t exist for '
+                                     f'{comb, C, l1, i}')
+                
+                if not os.path.exists(bal_accs_dir):
+                    raise ValueError(f'`bal_accs` dir doesn\'t exist for '
+                                     f'{comb, C, l1, i}')
+                
+                if not os.path.exists(auc_scores_dir):
+                    raise ValueError(f'`auc_scores` dir doesn\'t exist for '
+                                     f'{comb, C, l1, i}')
+                
+                if not os.path.exists(results_dir):
+                    raise ValueError(f'`results` dir doesn\'t exist for '
+                                     f'{comb, C, l1, i}')
+                
                 continue
             
             x_train = x[train_idx]
@@ -153,6 +177,10 @@ if __name__ == '__main__':
             
             train_idx_comb = np.isin(z_train, comb)
             x_train = x_train[train_idx_comb]
+            
+            # Scale data
+            scaler = MinMaxScaler() if scaler_type == 'minmax' else StandardScaler()
+            x_train = scaler.fit_transform(x_train)
             
             # Load pre-trained LR
             aux_params_dir = os.path.join(aux_comb_dir, f'{C}_{l1}_{i}_params.pkl')
@@ -169,13 +197,9 @@ if __name__ == '__main__':
             # Evaluate aux model to obtain labels
             y_train = aux_model.predict(x_train)
             
-            # Rescale
-            scaler = MinMaxScaler() if scaler_type == 'minmax' else StandardScaler()
-            x_train = scaler.fit_transform(x_train)
-            
-            # print(comb)
-            # counter = Counter(y_train)
-            # print(counter)
+            # Solve case when y_train only has one label
+            if len(np.unique(y_train)) == 1:
+                y_train = y[train_idx][train_idx_comb]
             
             # Train the model
             model = model_class(**param_dict)
@@ -185,9 +209,10 @@ if __name__ == '__main__':
             coefs = torch.from_numpy(model.coef_).flatten()
             intercepts = torch.from_numpy(model.intercept_).flatten()
             
-            params = torch.cat([coefs, intercepts])
+            priv_params = torch.cat([coefs, intercepts])
+            joblib.dump(priv_params, priv_params_dir)
             
-            # Weight and range to rescale params
+            # Weight and range to rescale parameters
             if scaler_type == "standard":
                 scaler_info = {
                     'mean': scaler.mean_,
@@ -206,9 +231,9 @@ if __name__ == '__main__':
             scale = torch.from_numpy(scaler_info['scale'])
         
             # Split coefficients and intercept
-            coefs = params[:-1]
-            intercept = params[-1]
-
+            coefs = priv_params[:-1]
+            intercept = priv_params[-1]
+            
             # Rescale coefs
             new_coefs = coefs / scale  # element-wise division
 
@@ -218,15 +243,14 @@ if __name__ == '__main__':
 
             # Concatenate back
             new_coefs_tensor = torch.cat([new_coefs, new_intercept.unsqueeze(0)])
-            params = new_coefs_tensor
+            resc_priv_params = new_coefs_tensor
             
-            # Save model's parameters
-            params_dir = os.path.join(comb_dir, f'{C}_{l1}_{i}_params.pkl')
-            joblib.dump(params, params_dir)
+            # Save rescaled parameters
+            joblib.dump(resc_priv_params, resc_priv_params_dir)
 
             # Evaluate final model by dataset
-            model.coef_ = params[:-1].numpy()
-            model.intercept_ = params[-1].numpy()
+            model.coef_ = resc_priv_params[:-1].numpy()
+            model.intercept_ = resc_priv_params[-1].numpy()
             
             bal_accs = {}
             auc_scores = {}
@@ -265,15 +289,13 @@ if __name__ == '__main__':
             print(auc_scores)
             print()
             
-            # Save scores
-            bal_accs_dir = os.path.join(comb_dir, f'{C}_{l1}_{i}_bal_accs.json')
+            # Save accuracies
             with open(bal_accs_dir, 'w') as file:
                 json.dump(bal_accs, file, indent=4)
             
-            auc_scores_dir = os.path.join(comb_dir, f'{C}_{l1}_{i}_auc_scores.json')
+            # Save scores
             with open(auc_scores_dir, 'w') as file:
                 json.dump(auc_scores, file, indent=4)
             
             # Save results
-            results_dir = os.path.join(comb_dir, f'{C}_{l1}_{i}_results.pkl')
             joblib.dump(results, results_dir)

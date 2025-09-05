@@ -36,7 +36,7 @@ def train_vanilla(n_splits, n_repeats, scaler_type, epsilon,
     y_z = np.array([f'{a}_{b}' for a, b in zip(y, z)])
     
     # Train
-    models_dir = os.path.join(cwd, 'privacy', 'results' 'models',
+    models_dir = os.path.join(cwd, 'privacy', 'results', 'models',
                               'lr_dp', scaler_type, 'vanilla')
     os.makedirs(models_dir, exist_ok=True)
     
@@ -45,10 +45,6 @@ def train_vanilla(n_splits, n_repeats, scaler_type, epsilon,
     for comb in all_combs:
         comb_dir = os.path.join(models_dir, '_'.join([str(c) for c in comb]))
         os.makedirs(comb_dir, exist_ok=True)
-        
-        # Comment if we want to restart the whole process or delete models
-        models_trained = len(os.listdir(comb_dir)) // 3  # params, results, scores
-        # models_trained = 0
             
         model_type, param_dict = create_lr_dp_model(epsilon)
 
@@ -58,7 +54,32 @@ def train_vanilla(n_splits, n_repeats, scaler_type, epsilon,
 
         # Store results
         for i, (train_idx, _) in enumerate(kf.split(x, y_z)):
-            if i <= models_trained:
+            print(comb, epsilon, i)
+            
+            params_dir = os.path.join(comb_dir, f'{epsilon}_{i}_params.pkl')
+            resc_params_dir = os.path.join(comb_dir, f'{epsilon}_{i}_resc_params.pkl')
+            bal_accs_dir = os.path.join(comb_dir, f'{epsilon}_{i}_bal_accs.json')
+            auc_scores_dir = os.path.join(comb_dir, f'{epsilon}_{i}_auc_scores.json')
+            results_dir = os.path.join(comb_dir, f'{epsilon}_{i}_results.pkl')
+            
+            if os.path.exists(params_dir):
+                # Check if resc_params, bal_accs, auc_scores and results dirs exist
+                if not os.path.exists(resc_params_dir):
+                    raise ValueError(f'`resc_params` dir doesn\'t exist for '
+                                     f'{comb, epsilon, i}')
+                
+                if not os.path.exists(bal_accs_dir):
+                    raise ValueError(f'`bal_accs` dir doesn\'t exist for '
+                                     f'{comb, epsilon, i}')
+                
+                if not os.path.exists(auc_scores_dir):
+                    raise ValueError(f'`auc_scores` dir doesn\'t exist for '
+                                     f'{comb, epsilon, i}')
+                
+                if not os.path.exists(results_dir):
+                    raise ValueError(f'`results` dir doesn\'t exist for '
+                                     f'{comb, epsilon, i}')
+                
                 continue
             
             x_train = x[train_idx]
@@ -69,13 +90,9 @@ def train_vanilla(n_splits, n_repeats, scaler_type, epsilon,
             x_train = x_train[train_idx_comb]
             y_train = y_train[train_idx_comb]
             
-            # Rescale
+            # Scale data
             scaler = MinMaxScaler() if scaler_type == 'minmax' else StandardScaler()
             x_train = scaler.fit_transform(x_train)
-            
-            # print(comb)
-            # counter = Counter(y_train)
-            # print(counter)
             
             # Train the model
             model = model_type(**param_dict)
@@ -86,8 +103,9 @@ def train_vanilla(n_splits, n_repeats, scaler_type, epsilon,
             intercepts = torch.from_numpy(model.intercept_).flatten()
             
             params = torch.cat([coefs, intercepts])
+            joblib.dump(params, params_dir)
             
-            # Weight and range to rescale params
+            # Weight and range to rescale parameters
             if scaler_type == "standard":
                 scaler_info = {
                     'mean': scaler.mean_,
@@ -118,15 +136,14 @@ def train_vanilla(n_splits, n_repeats, scaler_type, epsilon,
 
             # Concatenate back
             new_coefs_tensor = torch.cat([new_coefs, new_intercept.unsqueeze(0)])
-            params = new_coefs_tensor
+            resc_params = new_coefs_tensor
             
-            # Save model's parameters
-            params_dir = os.path.join(comb_dir, f'{epsilon}_{i}_params.pkl')
-            joblib.dump(params, params_dir)
+            # Save rescaled parameters
+            joblib.dump(resc_params, resc_params_dir)
 
             # Evaluate final model by dataset
-            model.coef_ = params[:-1].numpy()
-            model.intercept_ = params[-1].numpy()
+            model.coef_ = resc_params[:-1].numpy()
+            model.intercept_ = resc_params[-1].numpy()
             
             bal_accs = {}
             auc_scores = {}
@@ -165,17 +182,15 @@ def train_vanilla(n_splits, n_repeats, scaler_type, epsilon,
             print(auc_scores)
             print()
             
-            # Save scores
-            bal_accs_dir = os.path.join(comb_dir, f'{epsilon}_{i}_bal_accs.json')
+            # Save accuracies
             with open(bal_accs_dir, 'w') as file:
                 json.dump(bal_accs, file, indent=4)
             
-            auc_scores_dir = os.path.join(comb_dir, f'{epsilon}_{i}_auc_scores.json')
+            # Save scores
             with open(auc_scores_dir, 'w') as file:
                 json.dump(auc_scores, file, indent=4)
             
             # Save results
-            results_dir = os.path.join(comb_dir, f'{epsilon}_{i}_results.pkl')
             joblib.dump(results, results_dir)
 
 
@@ -198,14 +213,38 @@ def train_average(n_splits, n_repeats, n_models, scaler_type, epsilon,
         comb_dir = os.path.join(models_dir, '_'.join([str(c) for c in comb]))
         os.makedirs(comb_dir, exist_ok=True)
         
-        # Comment if we want to restart the whole process or delete models
-        models_trained = len(os.listdir(comb_dir)) // 3  # params, results, scores
-        # models_trained = 0
-        
         # This is where the loop begins (10000 iterations)
         # For each i, we train "n_splits * n_repeats" LRs and then
         # average to return a single model
-        for i in range(models_trained, n_models):
+        for i in range(n_models):
+            print(comb, epsilon, i)
+            
+            params_dir = os.path.join(comb_dir, f'{epsilon}_{i}_params.pkl')
+            resc_params_dir = os.path.join(comb_dir, f'{epsilon}_{i}_resc_params.pkl')
+            bal_accs_dir = os.path.join(comb_dir, f'{epsilon}_{i}_bal_accs.json')
+            auc_scores_dir = os.path.join(comb_dir, f'{epsilon}_{i}_auc_scores.json')
+            results_dir = os.path.join(comb_dir, f'{epsilon}_{i}_results.pkl')
+            
+            if os.path.exists(params_dir):
+                # Check if resc_params, bal_accs, auc_scores and results dirs exist
+                if not os.path.exists(resc_params_dir):
+                    raise ValueError(f'`resc_params` dir doesn\'t exist for '
+                                     f'{comb, epsilon, i}')
+                
+                if not os.path.exists(bal_accs_dir):
+                    raise ValueError(f'`bal_accs` dir doesn\'t exist for '
+                                     f'{comb, epsilon, i}')
+                
+                if not os.path.exists(auc_scores_dir):
+                    raise ValueError(f'`auc_scores` dir doesn\'t exist for '
+                                     f'{comb, epsilon, i}')
+                
+                if not os.path.exists(results_dir):
+                    raise ValueError(f'`results` dir doesn\'t exist for '
+                                     f'{comb, epsilon, i}')
+                
+                continue
+            
             all_params = []
             all_means = []
             all_scales = []
@@ -227,13 +266,9 @@ def train_average(n_splits, n_repeats, n_models, scaler_type, epsilon,
                 x_train = x_train[train_idx_comb]
                 y_train = y_train[train_idx_comb]
                 
-                # Rescale
+                # Scale data
                 scaler = MinMaxScaler() if scaler_type == 'minmax' else StandardScaler()
                 x_train = scaler.fit_transform(x_train)
-                
-                # print(comb)
-                # counter = Counter(y_train)
-                # print(counter)
                 
                 # Train the model
                 model = model_type(**param_dict)
@@ -267,10 +302,13 @@ def train_average(n_splits, n_repeats, n_models, scaler_type, epsilon,
             all_means = torch.stack(all_means, dim=0)
             all_scales = torch.stack(all_scales, dim=0)
             
-            # Re-scale and average models
+            # Average models
             avg_params = all_params.mean(dim=0)
             avg_means = all_means.mean(dim=0)
             avg_scales = all_scales.mean(dim=0)
+            
+            # Save parameters
+            joblib.dump(avg_params, params_dir)
             
             # Split coefficients and intercept
             coefs = avg_params[:-1]
@@ -286,15 +324,14 @@ def train_average(n_splits, n_repeats, n_models, scaler_type, epsilon,
             # Concatenate back
             new_coefs_tensor = torch.cat([new_coefs,
                                           new_intercept.unsqueeze(0)])
-            avg_params = new_coefs_tensor
+            resc_avg_params = new_coefs_tensor
             
-            # Save model's parameters
-            params_dir = os.path.join(comb_dir, f'{epsilon}_{i}_params.pkl')
-            joblib.dump(avg_params, params_dir)
+            # Save rescaled parameters
+            joblib.dump(resc_avg_params, resc_params_dir)
 
             # Evaluate final model by dataset
-            model.coef_ = avg_params[:-1].numpy()
-            model.intercept_ = avg_params[-1].numpy()
+            model.coef_ = resc_avg_params[:-1].numpy()
+            model.intercept_ = resc_avg_params[-1].numpy()
             
             bal_accs = {}
             auc_scores = {}
@@ -333,19 +370,16 @@ def train_average(n_splits, n_repeats, n_models, scaler_type, epsilon,
             print(auc_scores)
             print()
             
-            # Save scores
-            bal_accs_dir = os.path.join(comb_dir, f'{epsilon}_{i}_bal_accs.json')
+            # Save accuracies
             with open(bal_accs_dir, 'w') as file:
                 json.dump(bal_accs, file, indent=4)
             
-            auc_scores_dir = os.path.join(comb_dir, f'{epsilon}_{i}_auc_scores.json')
+            # Save scores
             with open(auc_scores_dir, 'w') as file:
                 json.dump(auc_scores, file, indent=4)
             
             # Save results
-            results_dir = os.path.join(comb_dir, f'{epsilon}_{i}_results.pkl')
             joblib.dump(results, results_dir)
-
 
 
 if __name__ == '__main__':
