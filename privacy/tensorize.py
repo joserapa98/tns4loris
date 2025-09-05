@@ -157,6 +157,18 @@ if __name__ == '__main__':
                                    '_'.join([str(c) for c in comb]))
         os.makedirs(tt_comb_dir, exist_ok=True)
         
+        # Tensorize using pivots from training sets
+        train_idx_comb = np.isin(z, comb)
+        x_sketch = x[train_idx_comb]
+        y_sketch = y[train_idx_comb]
+        
+        # Scale data
+        scaler = MinMaxScaler() if scaler_type == 'minmax' else StandardScaler()
+        x_sketch = scaler.fit_transform(x_sketch)
+        
+        xt_sketch = torch.from_numpy(x_sketch).float()
+        yt_sketch = torch.from_numpy(y_sketch).float()
+        
         for i in range(100):
             print(comb, C, l1, i)
             
@@ -191,18 +203,6 @@ if __name__ == '__main__':
                 
                 continue
             
-            # Tensorize using pivots from training sets
-            train_idx_comb = np.isin(z, comb)
-            x_sketch = x[train_idx_comb]
-            y_sketch = y[train_idx_comb]
-            
-            # Scale data
-            scaler = MinMaxScaler() if scaler_type == 'minmax' else StandardScaler()
-            x_sketch = scaler.fit_transform(x_sketch)
-            
-            xt_sketch = torch.from_numpy(x_sketch).float()
-            yt_sketch = torch.from_numpy(y_sketch).float()
-            
             # Load pre-trained LR
             aux_params_dir = os.path.join(aux_comb_dir,
                                           f'{C}_{l1}_{i}_params.pkl')
@@ -216,149 +216,157 @@ if __name__ == '__main__':
             aux_model.coef_ = aux_coefs
             aux_model.intercept_ = aux_intercept
             
-            # Tensorization
-            rand_ids = torch.randperm(xt_sketch.size(0))[:sketch_size]
-            cores = tt_rss(function=fn_model,
-                           embedding=embedding,
-                           sketch_samples=xt_sketch[rand_ids],
-                           labels=yt_sketch[rand_ids],
-                           domain_multiplier=1,
-                           domain=domain,
-                           rank=bond_dim,
-                           cum_percentage=cum_percentage,
-                           batch_size=batch_size,
-                           device=device,
-                           verbose=verbose)
-            
-            # Make all cores equal size
-            mps = tk.models.MPSLayer(tensors=cores)
-            for j in range(len(mps.mats_env) - 1):
-                mps.mats_env[j]['right'].change_size(size=bond_dim)
-            
-            # Save model's parameters before randomizing
-            cores = [c.detach() for c in mps.tensors]
-            torch.save(cores, cores_dir)
-            
-            # Weight and range to rescale parameters
-            if scaler_type == "standard":
-                scaler_info = {
-                    'mean': scaler.mean_,
-                    'scale': scaler.scale_
-                }
-            elif scaler_type == "minmax":
-                scaler_info = {
-                    'mean': scaler.data_min_,
-                    'scale': scaler.data_range_
-                }
-            else:
-                raise ValueError(
-                    'scaler_type must be "standard" or "minmax"')
-            
-            mean = torch.from_numpy(scaler_info['mean'])
-            scale = torch.from_numpy(scaler_info['scale'])
-            
-            # Rescale cores
-            resc_cores = []
-            for i in range(len(cores)):
-                aux_core = cores[i].clone()
+            # Repeat tensorization until model returns no NaNs
+            success = False
+            while not success:
+                # Tensorization
+                rand_ids = torch.randperm(xt_sketch.size(0))[:sketch_size]
+                cores = tt_rss(function=fn_model,
+                               embedding=embedding,
+                               sketch_samples=xt_sketch[rand_ids],
+                               labels=yt_sketch[rand_ids],
+                               domain_multiplier=1,
+                               domain=domain,
+                               rank=bond_dim,
+                               cum_percentage=cum_percentage,
+                               batch_size=batch_size,
+                               device=device,
+                               verbose=verbose)
                 
-                if i < (len(cores) // 2):
-                    j = i
-                elif i == (len(cores) // 2):
-                    resc_cores.append(aux_core)
-                    continue
-                else:
-                    j = i - 1
+                # Make all cores equal size
+                mps = tk.models.MPSLayer(tensors=cores)
+                for j in range(len(mps.mats_env) - 1):
+                    mps.mats_env[j]['right'].change_size(size=bond_dim)
                 
-                # Assuming phys_dim = 2
-                if i == 0:
-                    aux_core[0, :] = aux_core[0, :] - \
-                        (mean[j] / scale[j]) * aux_core[1, :]
-                    aux_core[1, :] = (1 / scale[j]) * aux_core[1, :]
-                else:
-                    aux_core[:, 0] = aux_core[:, 0] - \
-                        (mean[j] / scale[j]) * aux_core[:, 1]
-                    aux_core[:, 1] = (1 / scale[j]) * aux_core[:, 1]
+                # Save model's parameters
+                cores = [c.detach() for c in mps.tensors]
+                torch.save(cores, cores_dir)
                 
-                resc_cores.append(aux_core)
-            
-            # Randomize gauge
-            mps = tk.models.MPSLayer(tensors=resc_cores)
-            for j, node in enumerate(mps.mats_env):
-                right_size = node.size('right')
-                # U = random_unitary(right_size)
-                U = torch.randn((right_size, right_size))
-                if j < (len(mps.mats_env) - 1):
-                    node.tensor = torch.einsum('lir,rk->lik',
-                                               node.tensor, U)
-                if j > 0:
-                    node.tensor = torch.einsum('kl,lir->kir',
-                                               prev_U, node.tensor)
-                # prev_U = U.clone().H
-                prev_U = torch.linalg.inv(U)
-                # print(U @ prev_U)
-            
-            # Save model's parameters
-            resc_cores = [c.detach() for c in mps.tensors]
-            torch.save(resc_cores, resc_cores_dir)
-            
-            mps.trace(torch.zeros(1, xt_sketch.size(1), phys_dim))
-
-            # Evaluate final model by dataset
-            bal_accs = {}
-            auc_scores = {}
-            results = {}
-            
-            with torch.no_grad():
-                for dat_id in datasets_ids:
-                    idx = z == dat_id
-                    x_aux = torch.from_numpy(x[idx]).float()
-                    y_proba = tt_model(mps, x_aux)
-                    y_pred = (y_proba[:, 1] > 0.5).int()
-                    
-                    y_proba = y_proba.numpy()
-                    y_pred = y_pred.numpy()
-                    
-                    bacc = balanced_accuracy_score(y[idx], y_pred)
-                    bal_accs[dat_id] = bacc
-                    
-                    auc = roc_auc_score(y[idx], y_proba[:, 1])
-                    auc_scores[dat_id] = auc
-                    
-                    results[dat_id] = {
-                        'y_proba': y_proba,
-                        'y_pred': y_pred,
-                        'y_test': y[idx]
+                # Weight and range to rescale parameters
+                if scaler_type == "standard":
+                    scaler_info = {
+                        'mean': scaler.mean_,
+                        'scale': scaler.scale_
                     }
+                elif scaler_type == "minmax":
+                    scaler_info = {
+                        'mean': scaler.data_min_,
+                        'scale': scaler.data_range_
+                    }
+                else:
+                    raise ValueError(
+                        'scaler_type must be "standard" or "minmax"')
+                
+                mean = torch.from_numpy(scaler_info['mean'])
+                scale = torch.from_numpy(scaler_info['scale'])
+                
+                # Rescale cores
+                resc_cores = []
+                for i in range(len(cores)):
+                    aux_core = cores[i].clone()
                     
-                    print(dat_id)
-                    counter = Counter(y[idx])
-                    print(counter)
+                    if i < (len(cores) // 2):
+                        j = i
+                    elif i == (len(cores) // 2):
+                        resc_cores.append(aux_core)
+                        continue
+                    else:
+                        j = i - 1
+                    
+                    # Assuming phys_dim = 2
+                    if i == 0:
+                        aux_core[0, :] = aux_core[0, :] - \
+                            (mean[j] / scale[j]) * aux_core[1, :]
+                        aux_core[1, :] = (1 / scale[j]) * aux_core[1, :]
+                    else:
+                        aux_core[:, 0] = aux_core[:, 0] - \
+                            (mean[j] / scale[j]) * aux_core[:, 1]
+                        aux_core[:, 1] = (1 / scale[j]) * aux_core[:, 1]
+                    
+                    resc_cores.append(aux_core)
                 
-                x_aux = torch.from_numpy(x).float()
-                y_proba = tt_model(mps, x_aux)
-                y_pred = (y_proba[:, 1] > 0.5).int()
+                # Randomize gauge
+                mps = tk.models.MPSLayer(tensors=resc_cores)
+                for j, node in enumerate(mps.mats_env):
+                    right_size = node.size('right')
+                    # U = random_unitary(right_size)
+                    U = torch.randn((right_size, right_size))
+                    if j < (len(mps.mats_env) - 1):
+                        node.tensor = torch.einsum('lir,rk->lik',
+                                                   node.tensor, U)
+                    if j > 0:
+                        node.tensor = torch.einsum('kl,lir->kir',
+                                                   prev_U, node.tensor)
+                    # prev_U = U.clone().H
+                    prev_U = torch.linalg.inv(U)
+                    # print(U @ prev_U)
                 
-                y_proba = y_proba.numpy()
-                y_pred = y_pred.numpy()
+                # Save rescaled parameters
+                resc_cores = [c.detach() for c in mps.tensors]
+                torch.save(resc_cores, resc_cores_dir)
                 
-                bacc = balanced_accuracy_score(y, y_pred)
-                auc = roc_auc_score(y, y_proba[:, 1])
+                mps.trace(torch.zeros(1, xt_sketch.size(1), phys_dim))
+
+                # Evaluate final model by dataset
+                bal_accs = {}
+                auc_scores = {}
+                results = {}
                 
-                bal_accs['all'] = bacc
-                auc_scores['all'] = auc
-            
-            print(bal_accs)
-            print(auc_scores)
-            print()
-            
-            # Save accuracies
-            with open(bal_accs_dir, 'w') as file:
-                json.dump(bal_accs, file, indent=4)
-            
-            # Save scores
-            with open(auc_scores_dir, 'w') as file:
-                json.dump(auc_scores, file, indent=4)
-            
-            # Save results
-            joblib.dump(results, results_dir)
+                try:
+                    with torch.no_grad():
+                        for dat_id in datasets_ids:
+                            idx = z == dat_id
+                            x_aux = torch.from_numpy(x[idx]).float()
+                            y_proba = tt_model(mps, x_aux)
+                            y_pred = (y_proba[:, 1] > 0.5).int()
+                            
+                            y_proba = y_proba.numpy()
+                            y_pred = y_pred.numpy()
+                            
+                            bacc = balanced_accuracy_score(y[idx], y_pred)
+                            bal_accs[dat_id] = bacc
+                            
+                            auc = roc_auc_score(y[idx], y_proba[:, 1])
+                            auc_scores[dat_id] = auc
+                            
+                            results[dat_id] = {
+                                'y_proba': y_proba,
+                                'y_pred': y_pred,
+                                'y_test': y[idx]
+                            }
+                            
+                            print(dat_id)
+                            counter = Counter(y[idx])
+                            print(counter)
+                        
+                        x_aux = torch.from_numpy(x).float()
+                        y_proba = tt_model(mps, x_aux)
+                        y_pred = (y_proba[:, 1] > 0.5).int()
+                        
+                        y_proba = y_proba.numpy()
+                        y_pred = y_pred.numpy()
+                        
+                        bacc = balanced_accuracy_score(y, y_pred)
+                        auc = roc_auc_score(y, y_proba[:, 1])
+                        
+                        bal_accs['all'] = bacc
+                        auc_scores['all'] = auc
+                except:
+                    pass
+                
+                success = True
+                
+                print(bal_accs)
+                print(auc_scores)
+                print()
+                
+                # Save accuracies
+                with open(bal_accs_dir, 'w') as file:
+                    json.dump(bal_accs, file, indent=4)
+                
+                # Save scores
+                with open(auc_scores_dir, 'w') as file:
+                    json.dump(auc_scores, file, indent=4)
+                
+                # Save results
+                joblib.dump(results, results_dir)
