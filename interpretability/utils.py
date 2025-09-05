@@ -22,20 +22,26 @@ cwd = os.getcwd()
 
 #--------------------- Load and scale data --------------------
 
-def load_data(cwd, in_features, out_feature, dataset, scaler_type):
+def load_data(cwd, in_features, out_feature, datasets, scaler_type):
     data_file = os.path.join(cwd, 'loris', '02.Input', 'AllData.xlsx')
 
     # Data truncation
     TMB_upper = 50
     Age_upper = 85
     NLR_upper = 25
-
-    data = pd.read_excel(data_file, sheet_name=dataset, index_col=0)
     
-    # Data truncation
-    data['TMB'] = [c if c < TMB_upper else TMB_upper for c in data['TMB']]
-    data['Age'] = [c if c < Age_upper else Age_upper for c in data['Age']]
-    data['NLR'] = [c if c < NLR_upper else NLR_upper for c in data['NLR']]
+    dfs = []
+    for ds in datasets:
+        df = pd.read_excel(data_file, sheet_name=ds, index_col=0)
+        
+        # Data truncation
+        df['TMB'] = [c if c < TMB_upper else TMB_upper for c in df['TMB']]
+        df['Age'] = [c if c < Age_upper else Age_upper for c in df['Age']]
+        df['NLR'] = [c if c < NLR_upper else NLR_upper for c in df['NLR']]
+        
+        dfs.append(df)
+
+    data = pd.concat(dfs, axis=0)
     
     all_features = in_features + [out_feature]
     data_no_nans = data[all_features].dropna(axis=0)
@@ -53,10 +59,106 @@ def load_data(cwd, in_features, out_feature, dataset, scaler_type):
     scalers_dict = {}
     for feature in in_features:
         scaler = scaler_class()
-        data_scaled[feature] = scaler.fit_transform(data[[feature]])
+        data_scaled[feature] = scaler.fit_transform(data_no_nans[[feature]])
         scalers_dict[feature] = scaler
     
     return data_scaled, scalers_dict
+
+
+def load_sketch_data(cwd, in_features, out_feature, datasets, scaler_type, n_samples=1):
+    """
+    Loads dataset, fits scalers on full cleaned data, and returns a balanced sketch 
+    with up to `n_samples` per (CancerType, Response) combination, scaled at the end.
+
+    Parameters
+    ----------
+    cwd : str
+        Path to working directory.
+    in_features : list of str
+        Input features, including cancer type dummies.
+    out_feature : str
+        Target feature name (Response).
+    datasets : list of str
+        Excel sheet names to load.
+    n_samples : int
+        Number of samples per combination (CancerType, Response).
+    scaler_type : str
+        "Standard" or "MinMax".
+
+    Returns
+    -------
+    sketch_data_scaled : pd.DataFrame
+        Sketch dataset (scaled).
+    scalers_dict : dict
+        Dict of fitted scalers per feature.
+    """
+    
+    data_file = os.path.join(cwd, 'loris', '02.Input', 'AllData.xlsx')
+    
+    # Data truncation
+    TMB_upper = 50
+    Age_upper = 85
+    NLR_upper = 25
+    
+    # Load and concatenate datasets
+    dfs = []
+    for ds in datasets:
+        df = pd.read_excel(data_file, sheet_name=ds, index_col=0)
+        
+        # Data truncation
+        df['TMB'] = [c if c < TMB_upper else TMB_upper for c in df['TMB']]
+        df['Age'] = [c if c < Age_upper else Age_upper for c in df['Age']]
+        df['NLR'] = [c if c < NLR_upper else NLR_upper for c in df['NLR']]
+        
+        dfs.append(df)
+    
+    data_all_raw = pd.concat(dfs, axis=0)
+
+    # Drop NaNs in relevant features
+    all_features = in_features + [out_feature]
+    data_no_nans = data_all_raw[all_features].dropna(axis=0)
+
+    # Choose scaler class
+    if scaler_type == 'Standard':
+        scaler_class = StandardScaler
+    elif scaler_type == 'MinMax':
+        scaler_class = MinMaxScaler
+    else:
+        raise ValueError(f'Unrecognized scaler type: {scaler_type}. Use ' 
+                         '"Standard" or "MinMax".')
+    
+    # Fit scalers on full clean data (not applied yet)
+    scalers_dict = {}
+    for feature in in_features:
+        scaler = scaler_class()
+        scaler.fit(data_no_nans[[feature]])
+        scalers_dict[feature] = scaler
+
+    # Identify cancer type columns
+    cancer_types = [f for f in in_features if f.startswith("CancerType")]
+
+    selected_rows = []
+
+    for ctype in cancer_types:
+        subset = data_no_nans[data_no_nans[ctype] == 1]
+
+        for resp in [0, 1]:
+            candidates = subset[subset[out_feature] == resp]
+
+            if len(candidates) > 0:
+                take_n = min(n_samples, len(candidates))
+                sampled = candidates.sample(n=take_n, random_state=42)
+                selected_rows.append(sampled)
+
+    # Combine everything (raw values)
+    sketch_data = pd.concat(selected_rows, axis=0)
+
+    # Apply scalers to sketch_data
+    sketch_data_scaled = sketch_data.copy()
+    for feature in in_features:
+        sketch_data_scaled[feature] = scalers_dict[feature].transform(sketch_data[[feature]])
+
+    return sketch_data_scaled, scalers_dict
 
 
 def scale_input(patient, features, scalers_dict):
@@ -71,6 +173,31 @@ def scale_input(patient, features, scalers_dict):
     
     patient_list = patient_df.iloc[0].tolist()
     return patient_list
+
+
+def rescale_lr_models(model, scalers_dict, in_features):
+    # Save model's parameters
+    coefs = torch.from_numpy(model.coef_).flatten()
+    intercept = torch.from_numpy(model.intercept_).flatten()
+    
+    means = [torch.from_numpy(scaler.mean_)
+             for scaler in scalers_dict.values()]
+    means = torch.cat(means, dim=0)
+    
+    scales = [torch.from_numpy(scaler.scale_)
+              for scaler in scalers_dict.values()]
+    scales = torch.cat(scales, dim=0)
+    
+    new_coefs = coefs / scales  # element-wise division
+
+    # Adjust intercept
+    intercept_shift = torch.sum(coefs * means / scales)
+    new_intercept = intercept - intercept_shift
+    
+    model.coef_ = new_coefs.numpy()
+    model.intercept_ = new_intercept.numpy()
+    
+    return model
 
 
 #------------------ Train LR model ------------------------------------
@@ -127,14 +254,25 @@ def train_model(model_name, train_procedure, x_train, y_train, x_test, y_test):
     else:
         raise ValueError('`train_procedure` should be "vanilla" or "average"')
     
-    train_acc = accuracy_score(y_train, model.predict(x_train))
-    test_acc = accuracy_score(y_test, model.predict(x_test))
+    # Accuracy
+    y_train_lr = model.predict(x_train)
+    y_test_lr = model.predict(x_test)
+    
+    train_acc = accuracy_score(y_train, y_train_lr)
+    test_acc = accuracy_score(y_test, y_test_lr)
     print(f'Model accuracy: Train: {train_acc:.2f}, Test: {test_acc:.2f}')
     
-    train_bal_acc = balanced_accuracy_score(y_train, model.predict(x_train))
-    test_bal_acc = balanced_accuracy_score(y_test, model.predict(x_test))
+    train_bal_acc = balanced_accuracy_score(y_train, y_train_lr)
+    test_bal_acc = balanced_accuracy_score(y_test, y_test_lr)
     print(f'Model balanced accuracy: '
           f'Train: {train_bal_acc:.2f}, Test: {test_bal_acc:.2f}')
+    
+    print('Correct predicitons')
+    print('Train:')
+    correct_preds(y_train, y_train_lr)
+    print('Test:')
+    correct_preds(y_test, y_test_lr)
+    
     print()
     
     return model
@@ -147,31 +285,39 @@ def total_acc(y_true, y_pred):
 
 
 def balanced_acc(y_true, y_pred):
-    acc_0 = (y_pred[y_true == 0] == y_true[y_true == 0]).sum() / \
-        len(y_true[y_true == 0])
-    acc_1 = (y_pred[y_true == 1] == y_true[y_true == 1]).sum() / \
-        len(y_true[y_true == 1])
-    return (acc_0 + acc_1) / 2
+    # acc_0 = (y_pred[y_true == 0] == y_true[y_true == 0]).sum() / \
+    #     len(y_true[y_true == 0])
+    # acc_1 = (y_pred[y_true == 1] == y_true[y_true == 1]).sum() / \
+    #     len(y_true[y_true == 1])
+    # return (acc_0 + acc_1) / 2
+    return balanced_accuracy_score(y_true, y_pred)
+
+
+def correct_preds(y_true, y_pred):
+    correct_0 = (y_pred[y_true == 0] == y_true[y_true == 0]).sum()
+    print(f'Class 0: {correct_0} / {len(y_true[y_true == 0])} '
+          f'({correct_0 / len(y_true[y_true == 0]):.4f})')
+    
+    correct_1 = (y_pred[y_true == 1] == y_true[y_true == 1]).sum()
+    print(f'Class 1: {correct_1} / {len(y_true[y_true == 1])} '
+          f'({correct_1 / len(y_true[y_true == 1]):.4f})')
 
 
 #------------------ Tensorization ------------------------------------
 
 @torch.no_grad()
-def tensorize(model, x_train, y_train, x_test, y_test,
-              sketch_size, phys_dim, domain, bond_dim,
+def tensorize(fn_model, embedding, x_train, y_train, x_test, y_test,
+              x_sketch, y_sketch, sketch_size, phys_dim, domain, bond_dim,
               cum_percentage, batch_size, device, dtype, verbose):
     
-    def fn_model(data):
-        result = torch.from_numpy(model.predict_proba(data)).float()
-        return result
-    
-    def embedding(data):
-        return tk.embeddings.poly(data, degree=phys_dim - 1).float()
+    ids = torch.randperm(x_sketch.size(0))
+    x_sketch = x_sketch[ids]
+    y_sketch = y_sketch[ids]
     
     cores, info_dict = tt_rss(function=fn_model,
                               embedding=embedding,
-                              sketch_samples=x_train[:sketch_size],
-                              labels=y_train[:sketch_size],
+                              sketch_samples=x_sketch[:sketch_size],
+                              labels=y_sketch[:sketch_size],
                               domain_multiplier=1,
                               domain=domain,
                               rank=bond_dim,
@@ -185,21 +331,118 @@ def tensorize(model, x_train, y_train, x_test, y_test,
     print('Info:', info_dict)
     
     mps = tk.models.MPSLayer(tensors=cores)
-    mps.trace(torch.zeros(1, x_train.size(1), phys_dim))
+    mps.trace(torch.zeros(1, x_sketch.size(1), phys_dim))
     
     # Error
+    y_sketch_mps = mps(embedding(x_sketch))
     y_train_mps = mps(embedding(x_train))
     y_test_mps = mps(embedding(x_test))
     
+    y_sketch_lr = fn_model(x_sketch)
     y_train_lr = fn_model(x_train)
     y_test_lr = fn_model(x_test)
     
+    sketch_error = (y_sketch_mps - y_sketch_lr).norm().pow(2) / y_sketch_mps.size(0)
     train_error = (y_train_mps - y_train_lr).norm().pow(2) / y_train_mps.size(0)
     test_error = (y_test_mps - y_test_lr).norm().pow(2) / y_test_mps.size(0)
     
-    print(f'MSE: Train: {train_error:.2}, Test: {test_error:.2e}',)
-    print(y_train_mps[:10])
-    print(y_train_lr[:10])
+    print(f'\nMSE: Sketch: {sketch_error:.2e}, Train: {train_error:.2}, '
+          f'Test: {test_error:.2e}',)
+    print(y_sketch_mps[:10])
+    print(y_sketch_lr[:10])
+    print(y_sketch[:10])
+    
+    # Sketch accuracy
+    _, y_sketch_mps = y_sketch_mps.max(dim=1)
+    _, y_sketch_lr = y_sketch_lr.max(dim=1)
+    sketch_acc_mps = total_acc(y_sketch, y_sketch_mps)
+    sketch_acc_lr = total_acc(y_sketch, y_sketch_lr)
+    print('\nSketch accuracies:')
+    print(f'Model accuracy: TT: {sketch_acc_mps:.2f}, LR: {sketch_acc_lr:.2f}')
+    
+    sketch_bal_acc_mps = balanced_acc(y_sketch, y_sketch_mps)
+    sketch_bal_acc_lr = balanced_acc(y_sketch, y_sketch_lr)
+    print(f'Model balanced accuracy: TT: {sketch_bal_acc_mps:.2f}, '
+          f'LR: {sketch_bal_acc_lr:.2f}')
+    
+    # Train/test accuracy
+    _, y_train_mps = y_train_mps.max(dim=1)
+    _, y_test_mps = y_test_mps.max(dim=1)
+    
+    train_acc = total_acc(y_train, y_train_mps)
+    test_acc = total_acc(y_test, y_test_mps)
+    print('\nTrain/test TT accuracies:')
+    print(f'Model accuracy: Train: {train_acc:.2f}, Test: {test_acc:.2f}')
+    
+    train_bal_acc = balanced_acc(y_train, y_train_mps)
+    test_bal_acc = balanced_acc(y_test, y_test_mps)
+    print(f'Model balanced accuracy: '
+          f'Train: {train_bal_acc:.2f}, Test: {test_bal_acc:.2f}')
+    
+    print('\nCorrect predicitons:')
+    print('Train:')
+    correct_preds(y_train, y_train_mps)
+    print('Test:')
+    correct_preds(y_test, y_test_mps)
+    
+    print()
+    
+    mps.reset()
+    mps.unset_data_nodes()
+    
+    return mps, train_bal_acc, test_bal_acc
+
+
+@torch.no_grad()
+def renormalize(mps, phys_dim, discr_steps, n_classes, num_features,
+                x_train, y_train, x_test, y_test):
+    
+    def embedding(data):
+        return tk.embeddings.poly(data, degree=phys_dim - 1).float()
+    
+    n_num = len(num_features)
+    n_cat = mps.n_features - n_num - 1
+    n_features = mps.n_features
+    
+    # For first 4 continuous variables
+    emb_input_cont = []
+    for i in range(n_num):
+        aux_domain = torch.linspace(x_train[:, i].min(),
+                                    x_train[:, i].max(),
+                                    discr_steps).unsqueeze(1)
+        aux_emb_input_cont = embedding(aux_domain).squeeze(1)
+        aux_emb_input_cont = aux_emb_input_cont.sum(dim=0, keepdim=True) / discr_steps
+        emb_input_cont.append(aux_emb_input_cont)
+    
+    # For next 17 discrete variables
+    aux_domain = torch.arange(phys_dim).unsqueeze(1)
+    emb_input_discr = embedding(aux_domain).squeeze(1)
+    emb_input_discr = emb_input_discr.sum(dim=0, keepdim=True)
+    
+    # For output variable
+    emb_input_out = torch.ones(1, n_classes)
+    
+    # All features
+    emb_input = emb_input_cont + [emb_input_discr.clone() for _ in range(n_cat)]
+    emb_input = emb_input[:(n_features // 2)] + [emb_input_out] + \
+                emb_input[(n_features // 2):]
+    
+    # Compute norm
+    mps.reset()
+    mps.unset_data_nodes()
+    mps.out_features = []
+    
+    norm = mps(emb_input)
+    mps.reset()
+    mps.unset_data_nodes()
+    print(f'Norm: {norm.item():.4f}')
+    
+    for node in mps.mats_env:
+        node.tensor = node.tensor / norm.pow(1 / n_features)
+    
+    mps.out_features = [n_features // 2]
+    
+    mps.trace(torch.zeros(1, x_test.size(1), phys_dim))
     
     # Accuracy
     y_train_mps = mps(embedding(x_train))
@@ -216,6 +459,13 @@ def tensorize(model, x_train, y_train, x_test, y_test,
     test_bal_acc = balanced_acc(y_test, y_test_mps)
     print(f'Model balanced accuracy: '
           f'Train: {train_bal_acc:.2f}, Test: {test_bal_acc:.2f}')
+    
+    print('Correct predicitons')
+    print('Train:')
+    correct_preds(y_train, y_train_mps)
+    print('Test:')
+    correct_preds(y_test, y_test_mps)
+    
     print()
     
     mps.reset()
@@ -224,9 +474,7 @@ def tensorize(model, x_train, y_train, x_test, y_test,
     return mps
 
 
-@torch.no_grad()
-def renormalize(mps, phys_dim, discr_steps, n_classes, num_features,
-                x_train, x_test, y_test):
+def norm(mps, phys_dim, discr_steps, n_classes, num_features, x_train):
     
     def embedding(data):
         return tk.embeddings.poly(data, degree=phys_dim - 1).float()
@@ -267,27 +515,7 @@ def renormalize(mps, phys_dim, discr_steps, n_classes, num_features,
     mps.reset()
     mps.unset_data_nodes()
     
-    for node in mps.mats_env:
-        node.tensor = node.tensor / norm.pow(1 / n_features)
-    
-    mps.out_features = [n_features // 2]
-    
-    mps.trace(torch.zeros(1, x_test.size(1), phys_dim))
-    
-    y_test_mps = mps(embedding(x_test))
-    _, y_test_mps = y_test_mps.max(dim=1)
-    
-    test_acc = total_acc(y_test, y_test_mps)
-    print(f'Model accuracy: Test: {test_acc:.2f}')
-    
-    test_bal_acc = balanced_acc(y_test, y_test_mps)
-    print(f'Model balanced accuracy: Test: {test_bal_acc:.2f}')
-    print()
-    
-    mps.reset()
-    mps.unset_data_nodes()
-    
-    return mps
+    return norm
 
 
 #------------------ Distributions ------------------------------------
@@ -404,7 +632,7 @@ def get_distribution(mps, cond_features, cond_data, marg_features,
     for node in mats_env[1:]:
         result @= node
     
-    distr = result.tensor
+    distr = result.tensor.pow(2)
     distr = distr / distr.sum()
     
     mps.reset()
@@ -526,24 +754,13 @@ def feature_sensitivity_coeffs(feature, model, x_train, features, scalers_dict):
     This function tries to recover LORIS coefficients. The feature of interest
     is perturbed in its domain.
     """
-    try:
-        base_data = [scalers_dict[feat].mean_ for feat in features]
-    except:
-        base_data = [scalers_dict[feat].data_min_ for feat in features]
-    base_data_scaled = scale_input(base_data, features, scalers_dict)
-    base_data_scaled = torch.tensor(base_data_scaled).unsqueeze(0)
-    
-    xvals = []
     yvals = []
     
     feat_idx = features.index(feature)
     for limit in ['min', 'max']:
-        cond_data = base_data_scaled.clone()
-        if limit == 'min':
-            cond_data[0, feat_idx] = x_train[:, feat_idx].min()
-        elif limit == 'max':
-            cond_data[0, feat_idx] = x_train[:, feat_idx].max()
-        xvals.append(cond_data[0, feat_idx].item())
+        cond_data = torch.zeros(1, len(features))
+        if limit == 'max':
+            cond_data[0, feat_idx] = 1
         
         result = model(cond_data).detach()
         score = result / result.sum(dim=1, keepdim=True)
@@ -552,7 +769,7 @@ def feature_sensitivity_coeffs(feature, model, x_train, features, scalers_dict):
         
         yvals.append(logit)
     
-    coeff = (yvals[-1] - yvals[0]) / (xvals[-1] - xvals[0])
+    coeff = (yvals[-1] - yvals[0])
     return coeff
 
 
