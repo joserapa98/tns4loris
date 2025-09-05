@@ -47,7 +47,6 @@ def create_datasets_lr(model_name, scaler_type, model_type):
     test_size = 100
     
     x = all_data[featuresNA].values
-    y = all_data[phenoNA].values
     z = all_data['DatasetNum'].values
     
     _, x_test, = train_test_split(x,
@@ -168,7 +167,6 @@ def create_datasets_dp(model_name, scaler_type, model_type):
     test_size = 100
     
     x = all_data[featuresNA].values
-    y = all_data[phenoNA].values
     z = all_data['DatasetNum'].values
     
     _, x_test, = train_test_split(x,
@@ -313,7 +311,6 @@ def create_datasets_tt(model_name, scaler_type, model_type):
     test_size = 100
     
     x = all_data[featuresNA].values
-    y = all_data[phenoNA].values
     z = all_data['DatasetNum'].values
     
     _, x_test, = train_test_split(x,
