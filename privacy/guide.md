@@ -8,7 +8,7 @@
 
     - ``n_splits = 5``
     - ``n_repeats = 20``
-    - ``scaler_type = "standard", "minmax"``
+    - ``scaler_type = "standard"``
     - ``l1 = 0.0, 0.5, 1.0``
     - ``C = 0.1, 1.0, 10.0``
 
@@ -19,7 +19,7 @@
     - ``n_splits = 3``
     - ``n_repeats = 20``
     - ``n_models = 100``
-    - ``scaler_type = "standard", "minmax"``
+    - ``scaler_type = "standard"``
     - ``l1 = 0.0, 0.5, 1.0``
     - ``C = 0.1, 1.0, 10.0``
 
@@ -51,7 +51,7 @@
 
     - ``n_splits = 5``
     - ``n_repeats = 20``
-    - ``scaler_type = "standard", "minmax"``
+    - ``scaler_type = "standard"``
     - ``epsilon = 0.01, 0.1, 1.0, 10.0, 100.0``
 
     ```
@@ -61,5 +61,5 @@
     - ``n_splits = 3``
     - ``n_repeats = 20``
     - ``n_models = 100``
-    - ``scaler_type = "standard", "minmax"``
+    - ``scaler_type = "standard"``
     - ``epsilon = 0.01, 0.1, 1.0, 10.0, 100.0``
