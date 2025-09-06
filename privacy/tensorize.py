@@ -351,10 +351,11 @@ if __name__ == '__main__':
                         
                         bal_accs['all'] = bacc
                         auc_scores['all'] = auc
+                        
+                        success = True
                 except:
-                    pass
-                
-                success = True
+                    success = False
+                    continue
                 
                 print(bal_accs)
                 print(auc_scores)
