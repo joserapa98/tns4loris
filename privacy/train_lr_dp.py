@@ -432,7 +432,7 @@ if __name__ == '__main__':
             n_splits = int(args[0])   # 5
             n_repeats = int(args[1])  # 20
             scaler_type = args[2]     # standard / minmax
-            epsilon = float(args[3])  # [0.01, 0.1, 1.0, 10.0, 100.0]
+            epsilon = float(args[3])  # [0.01, 0.1, 1.0, 10.0, 100.0, inf]
         else:
             print('In "vanilla" mode the following arguments should be passed:\n'
                   '\t1) <n_splits> => number of splits\n'
