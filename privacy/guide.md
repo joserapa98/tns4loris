@@ -52,7 +52,7 @@
     - ``n_splits = 5``
     - ``n_repeats = 20``
     - ``scaler_type = "standard"``
-    - ``epsilon = 0.01, 0.1, 1.0, 10.0, 100.0``
+    - ``epsilon = 0.01, 0.1, 1.0, 10.0, 100.0, inf``
 
     ```
     python privacy/train_lr_dp.py --average <n_splits> <n_repeats> <n_models> <scaler_type> <epsilon>
@@ -62,4 +62,4 @@
     - ``n_repeats = 20``
     - ``n_models = 100``
     - ``scaler_type = "standard"``
-    - ``epsilon = 0.01, 0.1, 1.0, 10.0, 100.0``
+    - ``epsilon = 0.01, 0.1, 1.0, 10.0, 100.0, inf``
