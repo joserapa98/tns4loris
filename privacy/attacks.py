@@ -349,7 +349,7 @@ def create_datasets_tt(model_name, scaler_type, model_type):
             for C in [0.1, 1.0, 10.0]:
                 for l1 in [0.0, 0.5, 1.0]:
                     for i in range(100):
-                        cores_file = f'{C}_{l1}_{i}_cores.pkl'
+                        cores_file = f'{C}_{l1}_{i}_cores.pt'
                         bal_accs_file = f'{C}_{l1}_{i}_bal_accs.json'
                         auc_scores_file = f'{C}_{l1}_{i}_auc_scores.json'
                         
