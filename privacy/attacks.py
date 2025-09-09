@@ -491,7 +491,7 @@ def bb_attack(scores, labels, model_name, scaler_type, model_type, attack_name):
                                  f'test_set_bb_{attack_name}_{fold+1}.pkl'))
         
         # Define and train the MLP model
-        mlp_bb = MLPClassifier(hidden_layer_sizes=(128, 32),
+        mlp_bb = MLPClassifier(hidden_layer_sizes=(32, 16, 8),
                                activation='relu',
                                solver='adam',
                                max_iter=100)
@@ -535,7 +535,7 @@ def bb_attack_dp(scores, labels, model_name, scaler_type, model_type, attack_nam
                             f'test_set_bb_{attack_name}_{epsilon}_{fold+1}.pkl'))
             
             # Define and train the MLP model
-            mlp_bb = MLPClassifier(hidden_layer_sizes=(128, 32),
+            mlp_bb = MLPClassifier(hidden_layer_sizes=(32, 16, 8),
                                    activation='relu',
                                    solver='adam',
                                    max_iter=100)
@@ -555,7 +555,7 @@ def wb_attack(params, labels, model_name, scaler_type, model_type):
     n_splits = 5
     n_repeats = 5
     repkfold = RepeatedKFold(n_splits=n_splits, n_repeats=n_repeats,
-                            random_state=1)
+                             random_state=1)
     
     for rfold, (rtrain_idx, rtest_idx) in enumerate(repkfold.split(X, y)):
         print(f'Training repeated fold {rfold+1}/{n_splits * n_repeats}...')
@@ -584,7 +584,7 @@ def wb_attack(params, labels, model_name, scaler_type, model_type):
             y_train = y_train_all[train_idx]
 
             # Define and train the model
-            mlp_wb = MLPClassifier(hidden_layer_sizes=(128, 32),
+            mlp_wb = MLPClassifier(hidden_layer_sizes=(32, 16, 8),
                                    activation='relu',
                                    solver='adam',
                                    max_iter=100)
@@ -636,7 +636,7 @@ def wb_attack_dp(params, labels, model_name, scaler_type, model_type):
                 y_train = y_train_all[train_idx]
 
                 # Define and train the model
-                mlp_wb = MLPClassifier(hidden_layer_sizes=(128, 32),
+                mlp_wb = MLPClassifier(hidden_layer_sizes=(32, 16, 8),
                                        activation='relu',
                                        solver='adam',
                                        max_iter=100)
