@@ -285,12 +285,12 @@ def create_datasets_dp(model_name, scaler_type, model_type):
         else:
             data_eps = torch.load(data_dir_eps, weights_only=True)
         
-        all_labels.append(all_labels_eps)
-        all_params.append(all_params_eps)
-        all_bal_accs.append(all_bal_accs_eps)
-        all_auc_scores.append(all_auc_scores_eps)
-        all_out_scores.append(all_out_scores_eps)
-        all_bin_scores.append(all_bin_scores_eps)
+        all_labels.append(data_eps['labels'])
+        all_params.append(data_eps['params'])
+        all_bal_accs.append(data_eps['bal_accs'])
+        all_auc_scores.append(data_eps['auc_scores'])
+        all_out_scores.append(data_eps['out_scores'])
+        all_bin_scores.append(data_eps['bin_scores'])
         
     data = {
         'labels': all_labels,
