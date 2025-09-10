@@ -63,3 +63,13 @@
     - ``n_models = 100``
     - ``scaler_type = "standard"``
     - ``epsilon = 0.01, 0.1, 1.0, 10.0, 100.0, inf``
+
+
+5. Train attacker models:
+    ```
+    python privacy/attacks.py --<model_type> --<attack_type> <model_name>
+    ```
+
+    - ``model_type = "vanilla", "average"``
+    - ``attack_type = "bb", "wb"``
+    - ``model_name = "lr", "lr_priv", "lr_dp", "tt"``
