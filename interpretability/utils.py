@@ -48,13 +48,13 @@ def load_data(cwd, in_features, out_feature, datasets, scaler_type):
     
     data_scaled = copy.deepcopy(data_no_nans)
 
-    if scaler_type == 'Standard':
+    if scaler_type == 'standard':
         scaler_class = StandardScaler
-    elif scaler_type == 'MinMax':
+    elif scaler_type == 'minmax':
         scaler_class = MinMaxScaler
     else:
         raise ValueError(f'Unrecognized scaler type of {scaler_type}. '
-                         'Only "Standard" and "MinMax" are accepted.')
+                         'Only "standard" and "minmax" are accepted.')
     
     scalers_dict = {}
     for feature in in_features:
@@ -119,13 +119,13 @@ def load_sketch_data(cwd, in_features, out_feature, datasets, scaler_type, n_sam
     data_no_nans = data_all_raw[all_features].dropna(axis=0)
 
     # Choose scaler class
-    if scaler_type == 'Standard':
+    if scaler_type == 'standard':
         scaler_class = StandardScaler
-    elif scaler_type == 'MinMax':
+    elif scaler_type == 'minmax':
         scaler_class = MinMaxScaler
     else:
         raise ValueError(f'Unrecognized scaler type: {scaler_type}. Use ' 
-                         '"Standard" or "MinMax".')
+                         '"standard" or "minmax".')
     
     # Fit scalers on full clean data (not applied yet)
     scalers_dict = {}
@@ -200,41 +200,79 @@ def rescale_lr_models(model, scalers_dict, in_features):
     return model
 
 
+def discretize(vector, n_bins=10):
+    # Bin width
+    step = 1.0 / n_bins  
+
+    # Compute bin index
+    bin_idx = torch.floor(vector / step)  # 0 ... n_bins-1
+
+    # Lower & upper edges of the bin
+    bin_low  = bin_idx * step
+    bin_high = bin_low + step
+
+    # Apply your rule:
+    #   if prob <= 0.5 → snap to lower edge
+    #   if prob > 0.5  → snap to upper edge
+    result = torch.where(vector <= 0.5, bin_low, bin_high)
+
+    # Clip to [0,1]
+    result = torch.clamp(result, 0.0, 1.0)
+
+    return result
+
+
+#------------------ Show accuracies -----------------------------------
+
+def total_acc(y_true, y_pred):
+    # return (y_pred == y_true).sum() / len(y_true)
+    return accuracy_score(y_true, y_pred)
+
+
+def balanced_acc(y_true, y_pred):
+    # acc_0 = (y_pred[y_true == 0] == y_true[y_true == 0]).sum() / \
+    #     len(y_true[y_true == 0])
+    # acc_1 = (y_pred[y_true == 1] == y_true[y_true == 1]).sum() / \
+    #     len(y_true[y_true == 1])
+    # return (acc_0 + acc_1) / 2
+    return balanced_accuracy_score(y_true, y_pred)
+
+
+def print_correct_preds(y_true, y_pred):
+    correct_0 = (y_pred[y_true == 0] == y_true[y_true == 0]).sum()
+    print(f'    Class 0: {correct_0} / {len(y_true[y_true == 0])} '
+          f'({correct_0 / len(y_true[y_true == 0]):.4f})')
+    
+    correct_1 = (y_pred[y_true == 1] == y_true[y_true == 1]).sum()
+    print(f'    Class 1: {correct_1} / {len(y_true[y_true == 1])} '
+          f'({correct_1 / len(y_true[y_true == 1]):.4f})')
+
+
 #------------------ Train LR model ------------------------------------
 
-def create_model(model_name):
-    if model_name == 'nn2':
-        model_type = MLPClassifier
-        param_dict = {
-            'max_iter': 100,
-            'hidden_layer_sizes': (19, 19),
-            'activation': 'tanh',
-            'alpha': 1e-05,
-            'early_stopping': False
-        }
-        
-    elif model_name == 'llr6':
-        model_type = linear_model.LogisticRegression
-        param_dict = {
-            'solver': 'saga',
-            'penalty': 'elasticnet',
-            'max_iter': 100,
-            'l1_ratio': 1,
-            'class_weight': 'balanced',
-            'C': 0.1
-        }
-    
-    model = model_type(**param_dict)
+def create_lr_model():
+    model_class = linear_model.LogisticRegression
+    param_dict = {
+        'solver': 'saga',
+        'penalty': 'elasticnet',
+        'max_iter': 100,
+        'l1_ratio': 1,
+        'class_weight': 'balanced',
+        'C': 0.1
+    }
+    model = model_class(**param_dict)
     return model
 
 
-def train_model(model_name, train_procedure, x_train, y_train, x_test, y_test):
-    model = create_model(model_name)
+def train_lr_model(model_type, x_train, y_train, x_test, y_test):
+    model = create_lr_model()
     
-    if train_procedure == 'vanilla':
+    print('*TRAINING MODEL*\n')
+    
+    if model_type == 'vanilla':
         model.fit(x_train, y_train)
     
-    elif train_procedure == 'average':
+    elif model_type == 'average':
         all_coefs = []
         all_inters = []
         kf = RepeatedStratifiedKFold(n_splits=5,
@@ -252,7 +290,7 @@ def train_model(model_name, train_procedure, x_train, y_train, x_test, y_test):
         model.intercept_ = np.mean(all_inters)
             
     else:
-        raise ValueError('`train_procedure` should be "vanilla" or "average"')
+        raise ValueError('`model_type` should be "vanilla" or "average"')
     
     # Accuracy
     y_train_lr = model.predict(x_train)
@@ -260,47 +298,22 @@ def train_model(model_name, train_procedure, x_train, y_train, x_test, y_test):
     
     train_acc = accuracy_score(y_train, y_train_lr)
     test_acc = accuracy_score(y_test, y_test_lr)
-    print(f'Model accuracy: Train: {train_acc:.2f}, Test: {test_acc:.2f}')
+    print(f'Accuracy: '
+          f'Train: {train_acc:.2f}, Test: {test_acc:.2f}')
     
     train_bal_acc = balanced_accuracy_score(y_train, y_train_lr)
     test_bal_acc = balanced_accuracy_score(y_test, y_test_lr)
-    print(f'Model balanced accuracy: '
+    print(f'Balanced accuracy: '
           f'Train: {train_bal_acc:.2f}, Test: {test_bal_acc:.2f}')
     
-    print('Correct predicitons')
+    print('\n*Correct predicitons*')
     print('Train:')
-    correct_preds(y_train, y_train_lr)
+    print_correct_preds(y_train, y_train_lr)
     print('Test:')
-    correct_preds(y_test, y_test_lr)
-    
+    print_correct_preds(y_test, y_test_lr)
     print()
     
     return model
-
-
-#------------------ MPS Accuracies ------------------------------------
-
-def total_acc(y_true, y_pred):
-    return (y_pred == y_true).sum() / len(y_true)
-
-
-def balanced_acc(y_true, y_pred):
-    # acc_0 = (y_pred[y_true == 0] == y_true[y_true == 0]).sum() / \
-    #     len(y_true[y_true == 0])
-    # acc_1 = (y_pred[y_true == 1] == y_true[y_true == 1]).sum() / \
-    #     len(y_true[y_true == 1])
-    # return (acc_0 + acc_1) / 2
-    return balanced_accuracy_score(y_true, y_pred)
-
-
-def correct_preds(y_true, y_pred):
-    correct_0 = (y_pred[y_true == 0] == y_true[y_true == 0]).sum()
-    print(f'Class 0: {correct_0} / {len(y_true[y_true == 0])} '
-          f'({correct_0 / len(y_true[y_true == 0]):.4f})')
-    
-    correct_1 = (y_pred[y_true == 1] == y_true[y_true == 1]).sum()
-    print(f'Class 1: {correct_1} / {len(y_true[y_true == 1])} '
-          f'({correct_1 / len(y_true[y_true == 1]):.4f})')
 
 
 #------------------ Tensorization ------------------------------------
@@ -313,6 +326,8 @@ def tensorize(fn_model, embedding, x_train, y_train, x_test, y_test,
     ids = torch.randperm(x_sketch.size(0))
     x_sketch = x_sketch[ids]
     y_sketch = y_sketch[ids]
+    
+    print('*TENSORIZING MODEL*\n')
     
     cores, info_dict = tt_rss(function=fn_model,
                               embedding=embedding,
@@ -328,7 +343,7 @@ def tensorize(fn_model, embedding, x_train, y_train, x_test, y_test,
                               verbose=verbose,
                               return_info=True)
     
-    print('Info:', info_dict)
+    print(f'Info: {info_dict}')
     
     mps = tk.models.MPSLayer(tensors=cores)
     mps.trace(torch.zeros(1, x_sketch.size(1), phys_dim))
@@ -346,8 +361,10 @@ def tensorize(fn_model, embedding, x_train, y_train, x_test, y_test,
     train_error = (y_train_mps - y_train_lr).norm().pow(2) / y_train_mps.size(0)
     test_error = (y_test_mps - y_test_lr).norm().pow(2) / y_test_mps.size(0)
     
-    print(f'\nMSE: Sketch: {sketch_error:.2e}, Train: {train_error:.2}, '
-          f'Test: {test_error:.2e}',)
+    print(f'\nMSE: '
+          f'Sketch: {sketch_error:.2e}, '
+          f'Train: {train_error:.2}, '
+          f'Test: {test_error:.2e}')
     print(y_sketch_mps[:10])
     print(y_sketch_lr[:10])
     print(y_sketch[:10])
@@ -357,12 +374,13 @@ def tensorize(fn_model, embedding, x_train, y_train, x_test, y_test,
     _, y_sketch_lr = y_sketch_lr.max(dim=1)
     sketch_acc_mps = total_acc(y_sketch, y_sketch_mps)
     sketch_acc_lr = total_acc(y_sketch, y_sketch_lr)
-    print('\nSketch accuracies:')
-    print(f'Model accuracy: TT: {sketch_acc_mps:.2f}, LR: {sketch_acc_lr:.2f}')
+    print(f'\n*Sketch accuracies*\n'
+          f'Accuracy: TT: {sketch_acc_mps:.2f}, LR: {sketch_acc_lr:.2f}')
     
     sketch_bal_acc_mps = balanced_acc(y_sketch, y_sketch_mps)
     sketch_bal_acc_lr = balanced_acc(y_sketch, y_sketch_lr)
-    print(f'Model balanced accuracy: TT: {sketch_bal_acc_mps:.2f}, '
+    print(f'Balanced accuracy: '
+          f'TT: {sketch_bal_acc_mps:.2f}, '
           f'LR: {sketch_bal_acc_lr:.2f}')
     
     # Train/test accuracy
@@ -371,26 +389,25 @@ def tensorize(fn_model, embedding, x_train, y_train, x_test, y_test,
     
     train_acc = total_acc(y_train, y_train_mps)
     test_acc = total_acc(y_test, y_test_mps)
-    print('\nTrain/test TT accuracies:')
-    print(f'Model accuracy: Train: {train_acc:.2f}, Test: {test_acc:.2f}')
+    print(f'\n*Train/test TT accuracies*\n'
+          f'Accuracy: Train: {train_acc:.2f}, Test: {test_acc:.2f}')
     
     train_bal_acc = balanced_acc(y_train, y_train_mps)
     test_bal_acc = balanced_acc(y_test, y_test_mps)
-    print(f'Model balanced accuracy: '
+    print(f'Balanced accuracy: '
           f'Train: {train_bal_acc:.2f}, Test: {test_bal_acc:.2f}')
     
-    print('\nCorrect predicitons:')
+    print('\n*Correct predicitons*')
     print('Train:')
-    correct_preds(y_train, y_train_mps)
+    print_correct_preds(y_train, y_train_mps)
     print('Test:')
-    correct_preds(y_test, y_test_mps)
-    
+    print_correct_preds(y_test, y_test_mps)
     print()
     
     mps.reset()
     mps.unset_data_nodes()
     
-    return mps, train_bal_acc, test_bal_acc
+    return mps
 
 
 @torch.no_grad()
@@ -462,9 +479,9 @@ def renormalize(mps, phys_dim, discr_steps, n_classes, num_features,
     
     print('Correct predicitons')
     print('Train:')
-    correct_preds(y_train, y_train_mps)
+    print_correct_preds(y_train, y_train_mps)
     print('Test:')
-    correct_preds(y_test, y_test_mps)
+    print_correct_preds(y_test, y_test_mps)
     
     print()
     
