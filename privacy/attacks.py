@@ -85,7 +85,7 @@ def create_datasets_lr(model_name, scaler_type, model_type):
                     model = model_class(**param_dict)
                     
                     for i in range(100):
-                        params_file = f'{C}_{l1}_{i}_params.pkl'
+                        params_file = f'{C}_{l1}_{i}_resc_params.pkl'
                         bal_accs_file = f'{C}_{l1}_{i}_bal_accs.json'
                         auc_scores_file = f'{C}_{l1}_{i}_auc_scores.json'
                         
@@ -213,7 +213,7 @@ def create_datasets_dp(model_name, scaler_type, model_type):
                 
                 comb_dir = os.path.join(models_dir, comb)
                 for i in range(100):
-                    params_file = f'{epsilon}_{i}_params.pkl'
+                    params_file = f'{epsilon}_{i}_resc_params.pkl'
                     bal_accs_file = f'{epsilon}_{i}_bal_accs.json'
                     auc_scores_file = f'{epsilon}_{i}_auc_scores.json'
                     
@@ -349,7 +349,7 @@ def create_datasets_tt(model_name, scaler_type, model_type):
             for C in [0.1, 1.0, 10.0]:
                 for l1 in [0.0, 0.5, 1.0]:
                     for i in range(100):
-                        cores_file = f'{C}_{l1}_{i}_cores.pt'
+                        cores_file = f'{C}_{l1}_{i}_resc_cores.pt'
                         bal_accs_file = f'{C}_{l1}_{i}_bal_accs.json'
                         auc_scores_file = f'{C}_{l1}_{i}_auc_scores.json'
                         
