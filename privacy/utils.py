@@ -56,7 +56,7 @@ def load_data(cwd, in_features, out_feature, datasets, datasets_ids):
 
 
 def create_lr_model(l1, C):
-    model_type = linear_model.LogisticRegression
+    model_class = linear_model.LogisticRegression
     param_dict = {
         'solver': 'saga',
         'penalty': 'elasticnet',
@@ -65,16 +65,16 @@ def create_lr_model(l1, C):
         'class_weight': 'balanced',
         'C': C, # Should be 0.1 (passed in args)
     }
-    return model_type, param_dict
+    return model_class, param_dict
 
 
 def create_lr_dp_model(epsilon):
-    model_type = dp_models.LogisticRegression
+    model_class = dp_models.LogisticRegression
     param_dict = {
         'max_iter': 100,
         'epsilon': epsilon,
     }
-    return model_type, param_dict
+    return model_class, param_dict
 
 
 def discretize(vector, n_bins=10):
