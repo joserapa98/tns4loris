@@ -548,6 +548,11 @@ def bb_attack_dp(scores, labels, model_name, scaler_type, model_type, attack_nam
 def wb_attack(params, labels, model_name, scaler_type, model_type):
     X, y = params, labels
     
+    # Avoid NaNs and infs in lr_tt params
+    mask = ~X.isnan().any(dim=1)
+    mask = mask * ~X.isinf().any(dim=1)
+    X, y = X[mask], y[mask]
+    
     attack_model_dir = os.path.join(cwd, 'privacy', 'results', 'attacks', 'wb',
                                     model_name, scaler_type, model_type)
     os.makedirs(attack_model_dir, exist_ok=True)
