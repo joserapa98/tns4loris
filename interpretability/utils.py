@@ -248,6 +248,40 @@ def print_correct_preds(y_true, y_pred):
           f'({correct_1 / len(y_true[y_true == 1]):.4f})')
 
 
+def evaluate_by_cancer(model, x_train, y_train, scalers_dict):
+    cond_features = ['CancerType1', 'CancerType2', 'CancerType3', 'CancerType4',
+                     'CancerType5', 'CancerType6', 'CancerType7', 'CancerType8',
+                     'CancerType9', 'CancerType10', 'CancerType11', 'CancerType12',
+                     'CancerType13', 'CancerType14', 'CancerType15', 'CancerType16']
+    
+    for cancer_idx in range(len(cond_features)):
+        cond_data = torch.zeros(len(cond_features))
+        cond_data[cancer_idx] = 1
+        cond_data_scaled = scale_input(cond_data, cond_features, scalers_dict)
+        cond_data_scaled = torch.tensor(cond_data_scaled).unsqueeze(0)
+        
+        # Evaluate model
+        mask = (x_train[:, 5:] == cond_data_scaled).all(dim=1)
+        
+        aux_x_train = x_train[mask]
+        aux_y_train = y_train[mask]
+        
+        y_pred = model(aux_x_train)
+        _, y_pred = y_pred.max(dim=1)
+        
+        train_acc = total_acc(aux_y_train, y_pred)
+        train_bal_acc = balanced_acc(aux_y_train, y_pred)
+        print(f'{cond_features[cancer_idx]}: '
+              f'Train accuracy: {train_acc:.2f}, '
+              f'Train balanced accuracy: {train_bal_acc:.2f}')
+        
+        print('Correct predicitons')
+        print('Train:')
+        print_correct_preds(aux_y_train, y_pred)
+        
+        print()
+
+
 #------------------ Train LR model ------------------------------------
 
 def create_lr_model():
@@ -420,6 +454,7 @@ def renormalize(mps, phys_dim, discr_steps, n_classes, num_features,
     n_num = len(num_features)
     n_cat = mps.n_features - n_num - 1
     n_features = mps.n_features
+    out_position = mps.out_position
     
     # For first 4 continuous variables
     emb_input_cont = []
@@ -441,8 +476,7 @@ def renormalize(mps, phys_dim, discr_steps, n_classes, num_features,
     
     # All features
     emb_input = emb_input_cont + [emb_input_discr.clone() for _ in range(n_cat)]
-    emb_input = emb_input[:(n_features // 2)] + [emb_input_out] + \
-                emb_input[(n_features // 2):]
+    emb_input = emb_input[:out_position] + [emb_input_out] + emb_input[out_position:]
     
     # Compute norm
     mps.reset()
@@ -457,7 +491,7 @@ def renormalize(mps, phys_dim, discr_steps, n_classes, num_features,
     for node in mps.mats_env:
         node.tensor = node.tensor / norm.pow(1 / n_features)
     
-    mps.out_features = [n_features // 2]
+    mps.out_features = [out_position]
     
     mps.trace(torch.zeros(1, x_test.size(1), phys_dim))
     
@@ -498,7 +532,7 @@ def norm(mps, phys_dim, discr_steps, n_classes, num_features, x_train):
     
     n_num = len(num_features)
     n_cat = mps.n_features - n_num - 1
-    n_features = mps.n_features
+    out_position = mps.out_position
     
     # For first 4 continuous variables
     emb_input_cont = []
@@ -520,8 +554,7 @@ def norm(mps, phys_dim, discr_steps, n_classes, num_features, x_train):
     
     # All features
     emb_input = emb_input_cont + [emb_input_discr.clone() for _ in range(n_cat)]
-    emb_input = emb_input[:(n_features // 2)] + [emb_input_out] + \
-                emb_input[(n_features // 2):]
+    emb_input = emb_input[:out_position] + [emb_input_out] + emb_input[out_position:]
     
     # Compute norm
     mps.reset()
@@ -533,6 +566,105 @@ def norm(mps, phys_dim, discr_steps, n_classes, num_features, x_train):
     mps.unset_data_nodes()
     
     return norm
+
+
+def get_cancertype_mps(mps, phys_dim, cancer_idx, x_train, y_train, scalers_dict):
+    
+    def embedding(data):
+        return tk.embeddings.poly(data, degree=phys_dim - 1).float()
+    
+    cond_features = ['CancerType1', 'CancerType2', 'CancerType3', 'CancerType4',
+                     'CancerType5', 'CancerType6', 'CancerType7', 'CancerType8',
+                     'CancerType9', 'CancerType10', 'CancerType11', 'CancerType12',
+                     'CancerType13', 'CancerType14', 'CancerType15', 'CancerType16']
+    cond_data = torch.zeros(len(cond_features))
+    cond_data[cancer_idx] = 1
+    cond_data_scaled = scale_input(cond_data, cond_features, scalers_dict)
+    cond_data_scaled = torch.tensor(cond_data_scaled).unsqueeze(0)
+    emb_data_scaled = embedding(cond_data_scaled).squeeze(0)
+    
+    n_features = mps.n_features
+    out_position = mps.out_position
+    
+    data_nodes = []
+    for i in range(len(cond_features)):
+        node = tk.Node(tensor=emb_data_scaled[i, :],
+                       axes_names=('feature',),
+                       name='data',
+                       network=mps,
+                       data=True)
+        data_nodes.append(node)
+    
+    # Connect MPS and data nodes
+    # out_position is in between the cancer features
+    cancer_nodes = mps.mats_env[5:out_position] + mps.mats_env[(out_position + 1):]
+    assert len(cancer_nodes) == len(cond_features)
+    
+    for mps_node, data_node in zip(cancer_nodes, data_nodes):
+        mps_node['input'] ^ data_node['feature']
+    
+    # Contract
+    cancer_nodes[-1] = cancer_nodes[-1] @ mps.right_node
+    for i in range(len(cond_features)):
+        cancer_nodes[i] = cancer_nodes[i] @ data_nodes[i]
+    
+    all_contracted1 = cancer_nodes[0]
+    for node in cancer_nodes[1:]:
+        if all_contracted1.is_connected_to(node):
+            all_contracted1 @= node
+        else:
+            break
+    
+    all_contracted2 = cancer_nodes[-1]
+    for node in cancer_nodes[-2:0:-1]:
+        if all_contracted2.is_connected_to(node):
+            all_contracted2 = node @ all_contracted2
+        else:
+            break
+    
+    # Collect nodes
+    nodes = []
+    nodes.append(mps.left_node @ mps.mats_env[0])
+    nodes += mps.mats_env[1:5]
+    nodes.append(all_contracted1 @ mps.out_node @ all_contracted2)
+    
+    # Collect tensors
+    tensors = [node.tensor for node in nodes]
+    
+    mps.reset()
+    mps.unset_data_nodes()
+    
+    # Create new mps
+    new_mps = tk.models.MPSLayer(tensors=tensors, out_position=5)
+    new_mps.canonicalize(renormalize=True)
+    new_mps.trace(torch.zeros(1, 5, phys_dim))
+    
+    # Evaluate model
+    mask = (x_train[:, 5:] == cond_data_scaled).all(dim=1)
+    
+    x_train = x_train[mask, :5]
+    y_train = y_train[mask]
+    
+    y_pred = new_mps(embedding(x_train))
+    _, y_pred = y_pred.max(dim=1)
+    
+    train_acc = total_acc(y_train, y_pred)
+    print(f'Model accuracy: Train: {train_acc:.2f}')
+    
+    train_bal_acc = balanced_acc(y_train, y_pred)
+    print(f'Model balanced accuracy: '
+          f'Train: {train_bal_acc:.2f}')
+    
+    print('Correct predicitons')
+    print('Train:')
+    print_correct_preds(y_train, y_pred)
+    
+    print()
+    
+    new_mps.reset()
+    new_mps.unset_data_nodes()
+    
+    return new_mps, x_train, y_train, train_bal_acc
 
 
 #------------------ Distributions ------------------------------------
@@ -553,10 +685,10 @@ def get_distribution(mps, cond_features, cond_data, marg_features,
     def basis_embedding(data):
         return tk.embeddings.basis(data.int(), dim=n_classes).float()
     
-    n_features = mps.n_features
+    out_position = mps.out_position
     
-    all_features = in_features[:(n_features // 2)] + [out_feature] + \
-                   in_features[(n_features // 2):]
+    all_features = in_features[:out_position] + [out_feature] + \
+                   in_features[out_position:]
     cat_features = list(set(in_features) - set(num_features))
     marg_out_features = list(set(all_features) - \
         (set(cond_features) | set(marg_features)))
@@ -666,8 +798,12 @@ def get_distribution(mps, cond_features, cond_data, marg_features,
 
 def marginal_prediction(mps, cond_feature, cond_data, in_features, out_feature,
                         num_features, n_classes, phys_dim, x_train, discr_steps,
-                        scalers_dict):
-    cond_data_scaled = scale_input(cond_data, [cond_feature], scalers_dict)
+                        scalers_dict, scale_data=True):
+    if scale_data:
+        cond_data_scaled = scale_input(cond_data, [cond_feature], scalers_dict)
+    else:
+        cond_data_scaled = [cond_data]
+    
     marg_features = ['Response']
 
     distr, _ = get_distribution(
@@ -758,7 +894,9 @@ def feature_sensitivity_marg(feature, mps, in_features, out_feature,
             phys_dim=phys_dim,
             x_train=x_train,
             discr_steps=discr_steps,
-            scalers_dict=scalers_dict)
+            scalers_dict=scalers_dict,
+            scale_data=False
+            )
         
         yvals.append(score)
 
