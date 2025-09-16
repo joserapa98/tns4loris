@@ -224,20 +224,6 @@ def discretize(vector, n_bins=10):
 
 #------------------ Show accuracies -----------------------------------
 
-def total_acc(y_true, y_pred):
-    # return (y_pred == y_true).sum() / len(y_true)
-    return accuracy_score(y_true, y_pred)
-
-
-def balanced_acc(y_true, y_pred):
-    # acc_0 = (y_pred[y_true == 0] == y_true[y_true == 0]).sum() / \
-    #     len(y_true[y_true == 0])
-    # acc_1 = (y_pred[y_true == 1] == y_true[y_true == 1]).sum() / \
-    #     len(y_true[y_true == 1])
-    # return (acc_0 + acc_1) / 2
-    return balanced_accuracy_score(y_true, y_pred)
-
-
 def print_correct_preds(y_true, y_pred):
     correct_0 = (y_pred[y_true == 0] == y_true[y_true == 0]).sum()
     print(f'    Class 0: {correct_0} / {len(y_true[y_true == 0])} '
@@ -248,7 +234,7 @@ def print_correct_preds(y_true, y_pred):
           f'({correct_1 / len(y_true[y_true == 1]):.4f})')
 
 
-def evaluate_by_cancer(model, x_train, y_train, scalers_dict):
+def evaluate_by_cancertype(model, x_train, y_train, scalers_dict):
     cond_features = ['CancerType1', 'CancerType2', 'CancerType3', 'CancerType4',
                      'CancerType5', 'CancerType6', 'CancerType7', 'CancerType8',
                      'CancerType9', 'CancerType10', 'CancerType11', 'CancerType12',
@@ -269,8 +255,8 @@ def evaluate_by_cancer(model, x_train, y_train, scalers_dict):
         y_pred = model(aux_x_train)
         _, y_pred = y_pred.max(dim=1)
         
-        train_acc = total_acc(aux_y_train, y_pred)
-        train_bal_acc = balanced_acc(aux_y_train, y_pred)
+        train_acc = accuracy_score(aux_y_train, y_pred)
+        train_bal_acc = balanced_accuracy_score(aux_y_train, y_pred)
         print(f'{cond_features[cancer_idx]}: '
               f'Train accuracy: {train_acc:.2f}, '
               f'Train balanced accuracy: {train_bal_acc:.2f}')
@@ -406,13 +392,13 @@ def tensorize(fn_model, embedding, x_train, y_train, x_test, y_test,
     # Sketch accuracy
     _, y_sketch_mps = y_sketch_mps.max(dim=1)
     _, y_sketch_lr = y_sketch_lr.max(dim=1)
-    sketch_acc_mps = total_acc(y_sketch, y_sketch_mps)
-    sketch_acc_lr = total_acc(y_sketch, y_sketch_lr)
+    sketch_acc_mps = accuracy_score(y_sketch, y_sketch_mps)
+    sketch_acc_lr = accuracy_score(y_sketch, y_sketch_lr)
     print(f'\n*Sketch accuracies*\n'
           f'Accuracy: TT: {sketch_acc_mps:.2f}, LR: {sketch_acc_lr:.2f}')
     
-    sketch_bal_acc_mps = balanced_acc(y_sketch, y_sketch_mps)
-    sketch_bal_acc_lr = balanced_acc(y_sketch, y_sketch_lr)
+    sketch_bal_acc_mps = balanced_accuracy_score(y_sketch, y_sketch_mps)
+    sketch_bal_acc_lr = balanced_accuracy_score(y_sketch, y_sketch_lr)
     print(f'Balanced accuracy: '
           f'TT: {sketch_bal_acc_mps:.2f}, '
           f'LR: {sketch_bal_acc_lr:.2f}')
@@ -421,13 +407,13 @@ def tensorize(fn_model, embedding, x_train, y_train, x_test, y_test,
     _, y_train_mps = y_train_mps.max(dim=1)
     _, y_test_mps = y_test_mps.max(dim=1)
     
-    train_acc = total_acc(y_train, y_train_mps)
-    test_acc = total_acc(y_test, y_test_mps)
+    train_acc = accuracy_score(y_train, y_train_mps)
+    test_acc = accuracy_score(y_test, y_test_mps)
     print(f'\n*Train/test TT accuracies*\n'
           f'Accuracy: Train: {train_acc:.2f}, Test: {test_acc:.2f}')
     
-    train_bal_acc = balanced_acc(y_train, y_train_mps)
-    test_bal_acc = balanced_acc(y_test, y_test_mps)
+    train_bal_acc = balanced_accuracy_score(y_train, y_train_mps)
+    test_bal_acc = balanced_accuracy_score(y_test, y_test_mps)
     print(f'Balanced accuracy: '
           f'Train: {train_bal_acc:.2f}, Test: {test_bal_acc:.2f}')
     
@@ -448,6 +434,8 @@ def tensorize(fn_model, embedding, x_train, y_train, x_test, y_test,
 def renormalize(mps, phys_dim, discr_steps, n_classes, num_features,
                 x_train, y_train, x_test, y_test):
     
+    print('*RENORMALIZING MODEL*\n')
+    
     def embedding(data):
         return tk.embeddings.poly(data, degree=phys_dim - 1).float()
     
@@ -457,36 +445,51 @@ def renormalize(mps, phys_dim, discr_steps, n_classes, num_features,
     out_position = mps.out_position
     
     # For first 4 continuous variables
-    emb_input_cont = []
+    emb_matrices_cont = []
     for i in range(n_num):
-        aux_domain = torch.linspace(x_train[:, i].min(),
-                                    x_train[:, i].max(),
-                                    discr_steps).unsqueeze(1)
-        aux_emb_input_cont = embedding(aux_domain).squeeze(1)
-        aux_emb_input_cont = aux_emb_input_cont.sum(dim=0, keepdim=True) / discr_steps
-        emb_input_cont.append(aux_emb_input_cont)
+        min_value = x_train[:, i].min()
+        min_value = min_value - 0.25 * min_value.abs()
+        max_value = x_train[:, i].max()
+        max_value = max_value + 0.25 * max_value.abs()
+        
+        domain = torch.linspace(min_value, max_value, discr_steps).unsqueeze(1)
+        step_size = domain[1] - domain[0]
+        
+        emb_input = embedding(domain).squeeze(1)
+        aux_emb_mat = emb_input.T @ (step_size * emb_input)
+        emb_matrices_cont.append(aux_emb_mat)
     
-    # For next 17 discrete variables
-    aux_domain = torch.arange(phys_dim).unsqueeze(1)
-    emb_input_discr = embedding(aux_domain).squeeze(1)
-    emb_input_discr = emb_input_discr.sum(dim=0, keepdim=True)
+    # For next 17 binary variables
+    emb_matrices_discr = []
+    for i in range(n_cat):
+        min_value = x_train[:, i].min()
+        max_value = x_train[:, i].max()
+        
+        domain = torch.tensor([min_value, max_value]).unsqueeze(1)
+        emb_input = embedding(domain).squeeze(1)
+        aux_emb_mat = emb_input.T @ emb_input
+        emb_matrices_discr.append(aux_emb_mat)
     
     # For output variable
-    emb_input_out = torch.ones(1, n_classes)
+    emb_matrix_out = torch.eye(n_classes)
     
     # All features
-    emb_input = emb_input_cont + [emb_input_discr.clone() for _ in range(n_cat)]
-    emb_input = emb_input[:out_position] + [emb_input_out] + emb_input[out_position:]
+    emb_matrices = emb_matrices_cont + emb_matrices_discr
+    emb_matrices = emb_matrices[:out_position] + [emb_matrix_out] + \
+        emb_matrices[out_position:]
     
     # Compute norm
     mps.reset()
     mps.unset_data_nodes()
-    mps.out_features = []
+    mps.in_features = []
     
-    norm = mps(emb_input)
+    sq_norm = mps(marginalize_output=True,
+                  embedding_matrices=emb_matrices)
+    norm = sq_norm.pow(1/2)
+    print(f'Norm: {norm.item():.4f}')
+    
     mps.reset()
     mps.unset_data_nodes()
-    print(f'Norm: {norm.item():.4f}')
     
     for node in mps.mats_env:
         node.tensor = node.tensor / norm.pow(1 / n_features)
@@ -502,12 +505,12 @@ def renormalize(mps, phys_dim, discr_steps, n_classes, num_features,
     y_test_mps = mps(embedding(x_test))
     _, y_test_mps = y_test_mps.max(dim=1)
     
-    train_acc = total_acc(y_train, y_train_mps)
-    test_acc = total_acc(y_test, y_test_mps)
+    train_acc = accuracy_score(y_train, y_train_mps)
+    test_acc = accuracy_score(y_test, y_test_mps)
     print(f'Model accuracy: Train: {train_acc:.2f}, Test: {test_acc:.2f}')
     
-    train_bal_acc = balanced_acc(y_train, y_train_mps)
-    test_bal_acc = balanced_acc(y_test, y_test_mps)
+    train_bal_acc = balanced_accuracy_score(y_train, y_train_mps)
+    test_bal_acc = balanced_accuracy_score(y_test, y_test_mps)
     print(f'Model balanced accuracy: '
           f'Train: {train_bal_acc:.2f}, Test: {test_bal_acc:.2f}')
     
@@ -525,6 +528,7 @@ def renormalize(mps, phys_dim, discr_steps, n_classes, num_features,
     return mps
 
 
+@torch.no_grad()
 def norm(mps, phys_dim, discr_steps, n_classes, num_features, x_train):
     
     def embedding(data):
@@ -535,39 +539,56 @@ def norm(mps, phys_dim, discr_steps, n_classes, num_features, x_train):
     out_position = mps.out_position
     
     # For first 4 continuous variables
-    emb_input_cont = []
+    emb_matrices_cont = []
     for i in range(n_num):
-        aux_domain = torch.linspace(x_train[:, i].min(),
-                                    x_train[:, i].max(),
-                                    discr_steps).unsqueeze(1)
-        aux_emb_input_cont = embedding(aux_domain).squeeze(1)
-        aux_emb_input_cont = aux_emb_input_cont.sum(dim=0, keepdim=True) / discr_steps
-        emb_input_cont.append(aux_emb_input_cont)
+        min_value = x_train[:, i].min()
+        min_value = min_value - 0.25 * min_value.abs()
+        max_value = x_train[:, i].max()
+        max_value = max_value + 0.25 * max_value.abs()
+        
+        domain = torch.linspace(min_value, max_value, discr_steps).unsqueeze(1)
+        step_size = domain[1] - domain[0]
+        
+        emb_input = embedding(domain).squeeze(1)
+        aux_emb_mat = emb_input.T @ (step_size * emb_input)
+        emb_matrices_cont.append(aux_emb_mat)
     
-    # For next 17 discrete variables
-    aux_domain = torch.arange(phys_dim).unsqueeze(1)
-    emb_input_discr = embedding(aux_domain).squeeze(1)
-    emb_input_discr = emb_input_discr.sum(dim=0, keepdim=True)
+    # For next 17 binary variables
+    emb_matrices_discr = []
+    for i in range(n_cat):
+        min_value = x_train[:, i].min()
+        max_value = x_train[:, i].max()
+        
+        domain = torch.tensor([min_value, max_value]).unsqueeze(1)
+        emb_input = embedding(domain).squeeze(1)
+        aux_emb_mat = emb_input.T @ emb_input
+        emb_matrices_discr.append(aux_emb_mat)
     
     # For output variable
-    emb_input_out = torch.ones(1, n_classes)
+    emb_matrix_out = torch.eye(n_classes)
     
     # All features
-    emb_input = emb_input_cont + [emb_input_discr.clone() for _ in range(n_cat)]
-    emb_input = emb_input[:out_position] + [emb_input_out] + emb_input[out_position:]
+    emb_matrices = emb_matrices_cont + emb_matrices_discr
+    emb_matrices = emb_matrices[:out_position] + [emb_matrix_out] + \
+        emb_matrices[out_position:]
     
     # Compute norm
     mps.reset()
     mps.unset_data_nodes()
-    mps.out_features = []
+    mps.in_features = []
     
-    norm = mps(emb_input)
+    sq_norm = mps(marginalize_output=True,
+                  embedding_matrices=emb_matrices)
+    norm = sq_norm.pow(1/2)
+    print(f'Norm: {norm.item():.4f}')
+    
     mps.reset()
     mps.unset_data_nodes()
     
     return norm
 
 
+@torch.no_grad()
 def get_cancertype_mps(mps, phys_dim, cancer_idx, x_train, y_train, scalers_dict):
     
     def embedding(data):
@@ -648,10 +669,10 @@ def get_cancertype_mps(mps, phys_dim, cancer_idx, x_train, y_train, scalers_dict
     y_pred = new_mps(embedding(x_train))
     _, y_pred = y_pred.max(dim=1)
     
-    train_acc = total_acc(y_train, y_pred)
+    train_acc = accuracy_score(y_train, y_pred)
     print(f'Model accuracy: Train: {train_acc:.2f}')
     
-    train_bal_acc = balanced_acc(y_train, y_pred)
+    train_bal_acc = balanced_accuracy_score(y_train, y_pred)
     print(f'Model balanced accuracy: '
           f'Train: {train_bal_acc:.2f}')
     
@@ -668,6 +689,24 @@ def get_cancertype_mps(mps, phys_dim, cancer_idx, x_train, y_train, scalers_dict
 
 
 #------------------ Distributions ------------------------------------
+
+def take_all_diagonals(x: torch.Tensor) -> torch.Tensor:
+    """
+    Takes the diagonal along every consecutive pair of dimensions:
+    (d1,d1,d2,d2,...) -> (d1,d2,...).
+
+    Args:
+        x (torch.Tensor): input tensor of shape (d1,d1,d2,d2,...,dp,dp)
+
+    Returns:
+        torch.Tensor: tensor of shape (d1,d2,...,dp)
+    """
+    num_pairs = x.ndim // 2
+    for i in range(num_pairs):
+        # after each diagonal, dimensions shrink, so indices shift by -i
+        x = x.diagonal(dim1=i, dim2=i+1)
+    return x
+
 
 @torch.no_grad()
 def get_distribution(mps, cond_features, cond_data, marg_features,
@@ -697,7 +736,12 @@ def get_distribution(mps, cond_features, cond_data, marg_features,
     for i, feat in enumerate(all_features):
         dict_feat_idx[feat] = i
     
+    dict_in_feat_idx = {}
+    for i, feat in enumerate(in_features):
+        dict_in_feat_idx[feat] = i
+    
     emb_input_dict = {}
+    emb_matrices_dict = {}
     
     # Cond. emb. input
     for i, feat in enumerate(cond_features):
@@ -713,34 +757,42 @@ def get_distribution(mps, cond_features, cond_data, marg_features,
     # Marg. out emb. input
     for feat in marg_out_features:
         if feat in cat_features:
-            aux_domain = torch.arange(phys_dim).unsqueeze(1)
-            emb_input_marg_out = embedding(aux_domain).squeeze(1)
-            emb_input_marg_out = emb_input_marg_out.sum(dim=0)
+            min_value = x_train[:, dict_in_feat_idx[feat]].min()
+            max_value = x_train[:, dict_in_feat_idx[feat]].max()
+            domain = torch.tensor([min_value, max_value]).unsqueeze(1)
+            emb_input = embedding(domain).squeeze(1)
+            emb_mat_marg_out = emb_input.T @ emb_input
         elif feat == out_feature:
-            emb_input_marg_out = torch.ones(n_classes)
+            emb_mat_marg_out = torch.eye(n_classes)
         else:
-            aux_domain = torch.linspace(x_train[:, dict_feat_idx[feat]].min(),
-                                        x_train[:, dict_feat_idx[feat]].max(),
-                                        discr_steps).unsqueeze(1)
-            emb_input_marg_out = embedding(aux_domain).squeeze(1)
-            emb_input_marg_out = emb_input_marg_out.sum(dim=0)
-            emb_input_marg_out = emb_input_marg_out / discr_steps
+            min_value = x_train[:, dict_in_feat_idx[feat]].min()
+            min_value = min_value - 0.25 * min_value.abs()
+            max_value = x_train[:, dict_in_feat_idx[feat]].max()
+            max_value = max_value + 0.25 * max_value.abs()
+            
+            domain = torch.linspace(min_value, max_value, discr_steps).unsqueeze(1)
+            step_size = domain[1] - domain[0]
+            
+            emb_input = embedding(domain).squeeze(1)
+            emb_mat_marg_out = emb_input.T @ (step_size * emb_input)
         
-        emb_input_dict[feat] = emb_input_marg_out
+        emb_matrices_dict[feat] = emb_mat_marg_out
     
     # Marg. emb. input
     for feat in marg_features:
         if feat in cat_features:
-            aux_domain = torch.arange(phys_dim).unsqueeze(1)
-            emb_input_marg = embedding(aux_domain).squeeze(1)
+            min_value = x_train[:, dict_in_feat_idx[feat]].min()
+            max_value = x_train[:, dict_in_feat_idx[feat]].max()
+            domain = torch.tensor([min_value, max_value]).unsqueeze(1)
+            emb_input_marg = embedding(domain).squeeze(1)
         elif feat == out_feature:
-            aux_domain = torch.arange(n_classes).unsqueeze(1)
-            emb_input_marg = basis_embedding(aux_domain).squeeze(1)
+            domain = torch.arange(n_classes).unsqueeze(1)
+            emb_input_marg = basis_embedding(domain).squeeze(1)
         else:
-            aux_domain = torch.linspace(x_train[:, dict_feat_idx[feat]].min(),
-                                        x_train[:, dict_feat_idx[feat]].max(),
-                                        discr_steps).unsqueeze(1)
-            emb_input_marg = embedding(aux_domain).squeeze(1)
+            min_value = x_train[:, dict_in_feat_idx[feat]].min()
+            max_value = x_train[:, dict_in_feat_idx[feat]].max()
+            domain = torch.linspace(min_value, max_value, discr_steps).unsqueeze(1)
+            emb_input_marg = embedding(domain).squeeze(1)
         
         emb_input_dict[feat] = emb_input_marg
     
@@ -748,15 +800,20 @@ def get_distribution(mps, cond_features, cond_data, marg_features,
     mps.reset()
     mps.unset_data_nodes()
     
+    mps.out_features = [dict_feat_idx[feat]
+                        for feat in marg_out_features]
+    
     emb_input = []
     data_nodes = []
     for i, feat in enumerate(all_features):
-        emb_input.append(emb_input_dict[feat])
-        
-        if feat in marg_features:
+        if feat in cond_features:
+            emb_input.append(emb_input_dict[feat])
+            axes_names = ('feature',)
+        elif feat in marg_features:
+            emb_input.append(emb_input_dict[feat])
             axes_names = (f'batch_({i})', 'feature')
         else:
-            axes_names = ('feature',)
+            continue
         
         node = tk.Node(tensor=emb_input_dict[feat],
                        axes_names=axes_names,
@@ -764,28 +821,26 @@ def get_distribution(mps, cond_features, cond_data, marg_features,
                        network=mps,
                        data=True)
         data_nodes.append(node)
+        
+        node['feature'] ^ mps.mats_env[dict_feat_idx[feat]]['input']
     
-    # Connect MPS and data nodes
-    for mps_node, data_node in zip(mps.mats_env, data_nodes):
-        mps_node['input'] ^ data_node['feature']
+    emb_matrices = []
+    for i, feat in enumerate(all_features):
+        if feat in marg_out_features:
+            emb_matrices.append(emb_matrices_dict[feat])
     
-    # Contract
-    mats_env = mps.mats_env[:]
-    mats_env[0] = mps.left_node @ mats_env[0]
-    mats_env[-1] = mats_env[-1] @ mps.right_node
-    
-    for i in range(len(mats_env)):
-        mats_env[i] = mats_env[i] @ data_nodes[i]
-    
-    result = mats_env[0]
-    for node in mats_env[1:]:
-        result @= node
-    
-    distr = result.tensor.pow(2)
+    distr = mps(emb_input,
+                inline_input=True,
+                inline_mats=True,
+                marginalize_output=True,
+                embedding_matrices=emb_matrices)
+    distr = take_all_diagonals(distr)
     distr = distr / distr.sum()
     
     mps.reset()
     mps.unset_data_nodes()
+    
+    mps.out_features = [out_position]
     
     # Select order of marg. features
     marg_features_order = []
@@ -829,8 +884,7 @@ def patient_prediction(model, patient, features, scalers_dict):
     patient_scaled = torch.tensor(patient_scaled).unsqueeze(0)
     
     result = model(patient_scaled)
-    result = result / result.sum(dim=1, keepdim=True)
-    return result[0, 1]
+    return float(result[0, 1])
 
 
 #------------------ Feature sensitivity ------------------------------------
@@ -859,7 +913,6 @@ def feature_sensitivity_cond(feature, model, x_train, features, scalers_dict):
             cond_data[0, feat_idx] = x_train[:, feat_idx].max()
         
         result = model(cond_data).detach()
-        score = result / result.sum(dim=1, keepdim=True)
         score = score[0, 1]
         yvals.append(score)
 
@@ -918,7 +971,6 @@ def feature_sensitivity_coeffs(feature, model, x_train, features, scalers_dict):
             cond_data[0, feat_idx] = 1
         
         result = model(cond_data).detach()
-        score = result / result.sum(dim=1, keepdim=True)
         score = score[0, 1]
         logit = (score / (1 - score)).log()
         
