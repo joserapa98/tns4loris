@@ -908,12 +908,12 @@ def feature_sensitivity_cond(feature, model, x_train, features, scalers_dict):
     for limit in ['min', 'max']:
         cond_data = base_data_scaled.clone()
         if limit == 'min':
-            cond_data[0, feat_idx] = x_train[:, feat_idx].min()
+            cond_data[0, feat_idx] = 0.
         elif limit == 'max':
-            cond_data[0, feat_idx] = x_train[:, feat_idx].max()
+            cond_data[0, feat_idx] = 1.
         
-        result = model(cond_data).detach()
-        score = score[0, 1]
+        result = model(cond_data)
+        score = result[0, 1]
         yvals.append(score)
 
     return yvals[-1] - yvals[0]
@@ -929,12 +929,11 @@ def feature_sensitivity_marg(feature, mps, in_features, out_feature,
     """
     yvals = []
     
-    feat_idx = in_features.index(feature)
     for limit in ['min', 'max']:
         if limit == 'min':
-            cond_data = float(x_train[:, feat_idx].min())
+            cond_data = 0.
         elif limit == 'max':
-            cond_data = float(x_train[:, feat_idx].max())
+            cond_data = 1.
         
         score = marginal_prediction(
             mps=mps,
@@ -970,8 +969,8 @@ def feature_sensitivity_coeffs(feature, model, x_train, features, scalers_dict):
         if limit == 'max':
             cond_data[0, feat_idx] = 1
         
-        result = model(cond_data).detach()
-        score = score[0, 1]
+        result = model(cond_data)
+        score = result[0, 1]
         logit = (score / (1 - score)).log()
         
         yvals.append(logit)
