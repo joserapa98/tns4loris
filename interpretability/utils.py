@@ -8,6 +8,8 @@ from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.metrics import accuracy_score, balanced_accuracy_score
 from sklearn.model_selection import RepeatedStratifiedKFold
 
+from scipy.interpolate import interp1d
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -986,15 +988,14 @@ def feature_sensitivity_coeffs(feature, model, x_train, features, scalers_dict):
 def response_curve(model, x_train, y_train, xlabel,
                    bin_size=0.1, bs_number=1000, Plot_type=None):
     result = model(x_train)
-    score = result / result.sum(dim=1, keepdim=True)
-    y_pred = score[:, 1].numpy()
+    y_pred = result[:, 1].numpy()
     y_true = y_train.numpy()
     
     sampleNUM = len(y_true)
     score_list = np.arange(0.0, 1.01, 0.01)
     num_scores = len(score_list)
 
-    # Objective reponse ratio (what percentage of patients in this bin survived)
+    # Objective response ratio (what percentage of patients in this bin survived)
     ORR_list = [[] for _ in range(num_scores)]
     ORR_valid = [False for _ in range(num_scores)]  # Track if a bin ever had samples
 
@@ -1007,29 +1008,24 @@ def response_curve(model, x_train, y_train, xlabel,
         for i, score in enumerate(score_list):
             # Set the bin size
             bin_mask = (aux_y_pred > score - bin_size / 2) & \
-                (aux_y_pred <= score + bin_size / 2)
+                       (aux_y_pred <= score + bin_size / 2)
 
             # Record ORR only if samples exist in this bin
             if bin_mask.sum() > 0:
                 ORR_list[i].append(aux_y_true[bin_mask].mean())
                 ORR_valid[i] = True
-            
             else:
                 ORR_list[i].append(np.nan)  # Use NaN for clarity
-
 
     # Compute statistics, skipping NaNs (mean after bootstrapping)
     ORR_mean = [np.nanmean(x) if ORR_valid[i] else np.nan
                 for i, x in enumerate(ORR_list)]
-    # Add the 95% confidence interval
     ORR_05 = [np.nanquantile(x, 0.05) if ORR_valid[i] else np.nan
               for i, x in enumerate(ORR_list)]
     ORR_95 = [np.nanquantile(x, 0.95) if ORR_valid[i] else np.nan
               for i, x in enumerate(ORR_list)]
 
     # Forward-fill to smooth the line
-    # Instead of having drops when there are no samples, we hold at
-    # the previous point
     def forward_fill(arr):
         filled = []
         last_val = np.nan
@@ -1043,15 +1039,25 @@ def response_curve(model, x_train, y_train, xlabel,
     ORR_05 = forward_fill(ORR_05)
     ORR_95 = forward_fill(ORR_95)
 
+    # Compute automatic shading limits based on y_true values
+    ORR_mean_array = np.array(ORR_mean)
+    valid_mask = ~np.isnan(ORR_mean_array)
+    score_valid = np.array(score_list)[valid_mask]
+    ORR_valid_vals = ORR_mean_array[valid_mask]
+
+    # Interpolation for inverse mapping
+    inv_func = interp1d(ORR_valid_vals, score_valid, bounds_error=False, fill_value=(score_valid[0], score_valid[-1]))
+    x_gray = float(inv_func(0.1))  # corresponds to y_true=0.1
+    x_green = float(inv_func(0.5))  # corresponds to y_true=0.5
 
     # Plot
     _, ax = plt.subplots(figsize=(3.5, 3))
     ax.plot(score_list, ORR_mean, '-', color='r', label='Mean')
     ax.fill_between(score_list, ORR_05, ORR_95, color='r', alpha=0.25)
 
-    # Add shading
-    ax.axvspan(0, 0.3, facecolor='grey', alpha=0.2)   # Grey left region
-    ax.axvspan(0.7, 1.0, facecolor='green', alpha=0.2)  # Green right region
+    # Add automatic shading
+    ax.axvspan(0, x_gray, facecolor='grey', alpha=0.2)
+    ax.axvspan(x_green, 1.0, facecolor='green', alpha=0.2)
 
     ax.set_ylabel("Response probability (\%)")
     ax.set_xlabel(xlabel)
@@ -1063,7 +1069,9 @@ def response_curve(model, x_train, y_train, xlabel,
     ax.set_xticks([0, 0.2, 0.4, 0.6, 0.8, 1])
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
-    ax.plot([0, 1], [0, 1], '--',color='red', linewidth=1, label='y = x')
+    ax.plot([0, 1], [0, 1], '--', color='red', linewidth=1, label='y = x')
 
     plt.tight_layout()
-    return ax
+
+    # Return both ax and shading limits
+    return ax, x_gray, x_green
