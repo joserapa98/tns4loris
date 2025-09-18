@@ -1,10 +1,13 @@
 import os
+import random
 from itertools import chain, combinations
 
 from sklearn import linear_model
 from diffprivlib import models as dp_models
+from scipy.interpolate import interp1d
 
 import pandas as pd
+import numpy as np
 import torch
 
 
@@ -97,3 +100,187 @@ def discretize(vector, n_bins=10):
     result = torch.clamp(result, 0.0, 1.0)
 
     return result
+
+
+def classify_by_dataset(models, params, datasets):
+    # Multilabel: average predictions and apply threshold
+    all_preds = np.array([model.predict_proba(params) for model in models])
+    avg_preds = np.mean(all_preds, axis=0)
+    
+    for i in range(len(datasets)):
+        print(f'{datasets[i]:>16}: {avg_preds[0][i]:.4f}')
+
+
+@torch.no_grad()
+def response_confidence(model, x_train, y_train,
+                        bin_size=0.1, bs_number=1000):
+    """
+    Compute the bootstrapped response probability curve with confidence intervals.
+
+    Parameters
+    ----------
+    model : torch.nn.Module
+        Trained PyTorch model.
+    x_train : torch.Tensor
+        Input features.
+    y_train : torch.Tensor
+        True binary outcomes (0/1).
+    bin_size : float
+        Width of the bin for grouping predictions.
+    bs_number : int
+        Number of bootstrap resamples.
+
+    Returns
+    -------
+    score_list : np.ndarray
+        The x-axis (prediction score thresholds).
+    ORR_mean : np.ndarray
+        Mean response probability for each score bin.
+    ORR_05 : np.ndarray
+        5% quantile (lower bound of CI).
+    ORR_95 : np.ndarray
+        95% quantile (upper bound of CI).
+    """
+
+    # Predictions
+    result = model.predict_proba(x_train)
+    y_pred = result[:, 1]#.numpy()
+    y_true = y_train.numpy()
+
+    sampleNUM = len(y_true)
+    score_list = np.arange(0.0, 1.01, 0.01)
+    num_scores = len(score_list)
+
+    # ORR storage
+    ORR_list = [[] for _ in range(num_scores)]
+    ORR_valid = [False for _ in range(num_scores)]
+
+    # Bootstrapping
+    for _ in range(bs_number):
+        idx_resampled = random.choices(range(sampleNUM), k=sampleNUM)
+        aux_y_true = y_true[idx_resampled]
+        aux_y_pred = y_pred[idx_resampled]
+
+        for i, score in enumerate(score_list):
+            bin_mask = (aux_y_pred > score - bin_size / 2) & \
+                       (aux_y_pred <= score + bin_size / 2)
+
+            if bin_mask.sum() > 0:
+                ORR_list[i].append(aux_y_true[bin_mask].mean())
+                ORR_valid[i] = True
+            else:
+                ORR_list[i].append(np.nan)
+
+    # Compute statistics, skipping NaNs
+    ORR_mean = np.array([np.nanmean(x) if ORR_valid[i] else np.nan
+                         for i, x in enumerate(ORR_list)])
+    ORR_05 = np.array([np.nanquantile(x, 0.05) if ORR_valid[i] else np.nan
+                       for i, x in enumerate(ORR_list)])
+    ORR_95 = np.array([np.nanquantile(x, 0.95) if ORR_valid[i] else np.nan
+                       for i, x in enumerate(ORR_list)])
+
+    # Forward-fill missing values
+    def forward_fill(arr):
+        filled = []
+        last_val = np.nan
+        for val in arr:
+            if not np.isnan(val):
+                last_val = val
+            filled.append(last_val)
+        return np.array(filled)
+
+    ORR_mean = forward_fill(ORR_mean)
+    ORR_05 = forward_fill(ORR_05)
+    ORR_95 = forward_fill(ORR_95)
+
+    return score_list, ORR_mean, ORR_05, ORR_95
+
+
+@torch.no_grad()
+def response_confidence_inverse(score_list, ORR_mean, mean_value,
+                                bin_size=0.1, bs_number=1000):
+    """
+    Given a target mean response probability, return the corresponding score
+    (decision threshold) using the bootstrapped response curve.
+
+    Parameters
+    ----------
+    model : torch.nn.Module
+        Trained PyTorch model.
+    x_train : torch.Tensor
+        Input features.
+    y_train : torch.Tensor
+        True binary outcomes (0/1).
+    mean_value : float
+        Desired mean response probability (between 0 and 1).
+    bin_size : float
+        Width of the bin for grouping predictions.
+    bs_number : int
+        Number of bootstrap resamples.
+
+    Returns
+    -------
+    score : float
+        The score (threshold) corresponding to the given mean response.
+    """
+
+    # Remove NaNs for interpolation
+    valid_mask = ~np.isnan(ORR_mean)
+    valid_scores = score_list[valid_mask]
+    valid_means = ORR_mean[valid_mask]
+
+    if len(valid_scores) == 0:
+        raise ValueError("No valid bins found for interpolation.")
+
+    # Build inverse interpolation function: mean -> score
+    inv_func = interp1d(valid_means, valid_scores,
+                        bounds_error=False,
+                        fill_value=(valid_scores[0], valid_scores[-1]))
+
+    # Get the score for the desired mean
+    score = float(inv_func(mean_value))
+    return score
+
+
+def get_lr_param(data1, data2, response1, response2, score_list, ORR_mean):
+    param_diff = (data2 - data1).sum()
+    
+    response1 = response1 / 100.
+    response2 = response2 / 100.
+    
+    # print(f'{response1:.2f}, {response2:.2f}')
+    
+    response1 = torch.tensor(
+        response_confidence_inverse(score_list, ORR_mean, response1))
+    response2 = torch.tensor(
+        response_confidence_inverse(score_list, ORR_mean, response2))
+    
+    # print(f'{response1:.2f}, {response2:.2f}')
+    # print((response2 - response1) / param_diff)
+    
+    logit1 = (response1 / (1 - response1)).log()
+    logit2 = (response2 / (1 - response2)).log()
+    param = (logit2 - logit1) / param_diff
+    
+    return param
+
+
+def get_lr_param_from_model(data1, data2, model):
+    param_diff = (data2 - data1).sum()
+    
+    response1 = model(data1.unsqueeze(0)).squeeze(0)
+    response2 = model(data2.unsqueeze(0)).squeeze(0)
+    
+    if response1 == 1.:
+        response1 = torch.tensor(0.99)
+    if response2 == 1.:
+        response2 = torch.tensor(0.99)
+    
+    # print(f'{float(response1):.2f}, {float(response2):.2f}')
+    # print((response2 - response1) / param_diff)
+    
+    logit1 = (response1 / (1 - response1)).log()
+    logit2 = (response2 / (1 - response2)).log()
+    param = (logit2 - logit1) / param_diff
+    
+    return param
