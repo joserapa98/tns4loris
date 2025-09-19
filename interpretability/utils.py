@@ -985,7 +985,7 @@ def feature_sensitivity_coeffs(feature, model, x_train, features, scalers_dict):
 
 # This function is adapted from loris/code/07_1.PanCancer_LORIS_TMB_vs_resProb_curve.py
 @torch.no_grad()
-def response_curve(model, x_train, y_train, xlabel,
+def response_curve(model, x_train, y_train, xlabel, ax,
                    bin_size=0.1, bs_number=1000, Plot_type=None):
     result = model(x_train)
     y_pred = result[:, 1].numpy()
@@ -1051,15 +1051,13 @@ def response_curve(model, x_train, y_train, xlabel,
     x_green = float(inv_func(0.5))  # corresponds to y_true=0.5
 
     # Plot
-    _, ax = plt.subplots(figsize=(3.5, 3))
     ax.plot(score_list, ORR_mean, '-', color='r', label='Mean')
     ax.fill_between(score_list, ORR_05, ORR_95, color='r', alpha=0.25)
 
     # Add automatic shading
     ax.axvspan(0, x_gray, facecolor='grey', alpha=0.2)
     ax.axvspan(x_green, 1.0, facecolor='green', alpha=0.2)
-
-    ax.set_ylabel("Response probability (\%)")
+    
     ax.set_xlabel(xlabel)
 
     ax.set_ylim([-0.02, 1.02])
@@ -1070,8 +1068,6 @@ def response_curve(model, x_train, y_train, xlabel,
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     ax.plot([0, 1], [0, 1], '--', color='red', linewidth=1, label='y = x')
-
-    plt.tight_layout()
 
     # Return both ax and shading limits
     return ax, x_gray, x_green
