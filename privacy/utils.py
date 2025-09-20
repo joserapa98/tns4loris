@@ -102,13 +102,16 @@ def discretize(vector, n_bins=10):
     return result
 
 
-def classify_by_dataset(models, params, datasets):
+def classify_by_dataset(models, params, datasets, verbose=True):
     # Multilabel: average predictions and apply threshold
     all_preds = np.array([model.predict_proba(params) for model in models])
     avg_preds = np.mean(all_preds, axis=0)
     
-    for i in range(len(datasets)):
-        print(f'{datasets[i]:>16}: {avg_preds[0][i]:.4f}')
+    if verbose:
+        for i in range(len(datasets)):
+            print(f'{datasets[i]:>16}: {avg_preds[0][i]:.4f}')
+        
+    return avg_preds[0]
 
 
 @torch.no_grad()
