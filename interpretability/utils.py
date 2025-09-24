@@ -1,9 +1,9 @@
 import os
 import copy
+import joblib
 import random
 
 from sklearn import linear_model
-from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.metrics import accuracy_score, balanced_accuracy_score
 from sklearn.model_selection import RepeatedStratifiedKFold
@@ -12,20 +12,16 @@ from scipy.interpolate import interp1d
 
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 
 import torch
 import tensorkrowch as tk
 from tensorkrowch.decompositions import tt_rss
 
 
-cwd = os.getcwd()
-
-
 #--------------------- Load and scale data --------------------
 
 def load_data(cwd, in_features, out_feature, datasets, scaler_type):
-    data_file = os.path.join(cwd, 'loris', '02.Input', 'AllData.xlsx')
+    data_file = os.path.join(cwd, 'AllData.xlsx')
 
     # Data truncation
     TMB_upper = 50
@@ -94,8 +90,7 @@ def load_sketch_data(cwd, in_features, out_feature, datasets, scaler_type, n_sam
     scalers_dict : dict
         Dict of fitted scalers per feature.
     """
-    
-    data_file = os.path.join(cwd, 'loris', '02.Input', 'AllData.xlsx')
+    data_file = os.path.join(cwd, 'AllData.xlsx')
     
     # Data truncation
     TMB_upper = 50
@@ -335,6 +330,22 @@ def train_lr_model(model_type, x_train, y_train, x_test, y_test):
     print_correct_preds(y_test, y_test_lr)
     print()
     
+    return model
+
+
+def save_lr(model, filepath):
+    coefs = torch.from_numpy(model.coef_).flatten()
+    intercepts = torch.from_numpy(model.intercept_).flatten()
+    params = torch.cat([coefs, intercepts])
+    joblib.dump(params, filepath)
+
+
+def load_lr(filepath):
+    params = joblib.load(filepath)
+    model = linear_model.LogisticRegression()
+    model.coef_ = params[:-1].unsqueeze(0).numpy()
+    model.intercept_ = params[-1:].numpy()
+    model.classes_ = np.array([0, 1])  # assumes binary classification
     return model
 
 
