@@ -11,8 +11,6 @@
     - ``l1 = 0.0, 0.5, 1.0``
     - ``C = 0.1, 1.0, 10.0``
 
-
-
     ```
     python privacy/train_lr.py --average <n_splits> <n_repeats> <n_models> <scaler_type> <l1> <C>
     ```
@@ -51,8 +49,6 @@
     - ``scaler_type = "standard"``
     - ``epsilon = 0.01, 0.1, 1.0, 10.0, 100.0, inf``
 
-
-
     ```
     python privacy/train_lr_dp.py --average <n_splits> <n_repeats> <n_models> <scaler_type> <epsilon>
     ```
@@ -67,6 +63,7 @@
     ```
     python privacy/attacks.py --<model_type> --<attack_type> <model_name>
     ```
+
     - ``model_type = "vanilla", "average"``
     - ``attack_type = "bb", "wb"``
     - ``model_name = "lr", "lr_priv", "lr_dp", "tt"``
