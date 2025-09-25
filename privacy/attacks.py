@@ -1,5 +1,3 @@
-# Run script from parent folder "tns4loris"
-
 import sys
 import os
 import getopt

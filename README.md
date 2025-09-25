@@ -4,15 +4,6 @@ This repository contains the code used to run the experiments in the paper,
 including training LR models, tensorizing such models, and training DP LR models.
 
 
-## Quick Start
-
-Clone the repository:
-```bash
-git clone https://github.com/joserapa98/tns4loris.git
-cd tns4loris
-```
-
-
 ## Versions used in the experiments
 
 **Python**
