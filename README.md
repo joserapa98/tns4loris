@@ -11,6 +11,7 @@ Clone the repository:
 ```bash
 git clone https://github.com/joserapa98/tns4loris.git
 cd tns4loris
+```
 
 ---
 
