@@ -12,6 +12,7 @@
     - ``C = 0.1, 1.0, 10.0``
 
 
+
     ```
     python privacy/train_lr.py --average <n_splits> <n_repeats> <n_models> <scaler_type> <l1> <C>
     ```
@@ -49,6 +50,7 @@
     - ``n_repeats = 20``
     - ``scaler_type = "standard"``
     - ``epsilon = 0.01, 0.1, 1.0, 10.0, 100.0, inf``
+
 
 
     ```
