@@ -3,7 +3,6 @@
 This repository contains the code used to run the experiments in the paper,
 including training LR models, tensorizing such models, and training DP LR models.
 
----
 
 ## Quick Start
 
@@ -13,7 +12,6 @@ git clone https://github.com/joserapa98/tns4loris.git
 cd tns4loris
 ```
 
----
 
 ## Versions used in the experiments
 
@@ -38,7 +36,6 @@ cd tns4loris
 > **Note:** To render figure texts with $\LaTeX$, ensure that a LaTeX
             distribution is installed on your system.  
 
----
 
 ## Instructions
 
