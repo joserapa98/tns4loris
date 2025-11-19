@@ -73,13 +73,15 @@ if __name__ == '__main__':
         print('One of the options "vanilla" and "average" should be chosen')
         sys.exit()
     
-    if len(args) == 2:
-        l1 = float(args[0])      # [0.0, 0.5, 1.0]  -> 1.0
-        C = float(args[1])       # [0.1, 1.0, 10.0] -> 0.1
+    if len(args) == 3:
+        n_bins = int(args[0])    # [2, 4, 6]        -> 6
+        l1 = float(args[1])      # [0.0, 0.5, 1.0]  -> 1.0
+        C = float(args[2])       # [0.1, 1.0, 10.0] -> 0.1
     else:
         print('The following arguments should be passed:\n'
-              '\t1) <l1> => l1 regularization weight\n'
-              '\t2) <C> => inverse of total regularization weight\n')
+              '\t1) <n_bins> => number of bins for discretization\n'
+              '\t2) <l1> => l1 regularization weight\n'
+              '\t3) <C> => inverse of total regularization weight\n')
     
     # We should use scaler_type = "standard"
     scaler_type = 'standard'
@@ -122,7 +124,7 @@ if __name__ == '__main__':
     aux_model = aux_model_class(**aux_param_dict)
     aux_model.classes_ = np.array([0, 1])
     
-    def fn_model(data, n_bins=6):
+    def fn_model(data):
         # Get probabilities (numpy)
         y_proba = aux_model.predict_proba(data)
         y_proba = torch.from_numpy(y_proba).float()
@@ -171,33 +173,33 @@ if __name__ == '__main__':
             print(comb, C, l1, i)
             
             cores_dir = os.path.join(tt_comb_dir,
-                                     f'{C}_{l1}_{i}_cores.pt')
+                                     f'{n_bins}_{C}_{l1}_{i}_cores.pt')
             resc_cores_dir = os.path.join(tt_comb_dir,
-                                          f'{C}_{l1}_{i}_resc_cores.pt')
+                                          f'{n_bins}_{C}_{l1}_{i}_resc_cores.pt')
             bal_accs_dir = os.path.join(tt_comb_dir,
-                                        f'{C}_{l1}_{i}_bal_accs.json')
+                                        f'{n_bins}_{C}_{l1}_{i}_bal_accs.json')
             auc_scores_dir = os.path.join(tt_comb_dir,
-                                          f'{C}_{l1}_{i}_auc_scores.json')
+                                          f'{n_bins}_{C}_{l1}_{i}_auc_scores.json')
             results_dir = os.path.join(tt_comb_dir,
-                                       f'{C}_{l1}_{i}_results.pkl')
+                                       f'{n_bins}_{C}_{l1}_{i}_results.pkl')
             
             if os.path.exists(cores_dir):
                 # Check if resc_cores, bal_accs, auc_scores and results dirs exist
                 if not os.path.exists(resc_cores_dir):
                     raise ValueError(f'`resc_cores` dir doesn\'t exist for '
-                                     f'{comb, C, l1, i}')
+                                     f'{n_bins, comb, C, l1, i}')
                 
                 if not os.path.exists(bal_accs_dir):
                     raise ValueError(f'`bal_accs` dir doesn\'t exist for '
-                                     f'{comb, C, l1, i}')
+                                     f'{n_bins, comb, C, l1, i}')
                 
                 if not os.path.exists(auc_scores_dir):
                     raise ValueError(f'`auc_scores` dir doesn\'t exist for '
-                                     f'{comb, C, l1, i}')
+                                     f'{n_bins, comb, C, l1, i}')
                 
                 if not os.path.exists(results_dir):
                     raise ValueError(f'`results` dir doesn\'t exist for '
-                                     f'{comb, C, l1, i}')
+                                     f'{n_bins, comb, C, l1, i}')
                 
                 continue
             
