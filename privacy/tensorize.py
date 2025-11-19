@@ -95,8 +95,10 @@ if __name__ == '__main__':
                   'CancerType13', 'CancerType14', 'CancerType15', 'CancerType16']
     phenoNA = 'Response'
     
-    datasets = ['Chowell_train', 'Chowell_test', 'MSK1', 'MSK2', 'Shim_NSCLC',
-                'Kato_panCancer', 'Vanguri_NSCLC', 'Ravi_NSCLC', 'Pradat_panCancer']
+    # datasets = ['Chowell_train', 'Chowell_test', 'MSK1', 'MSK2', 'Shim_NSCLC',
+    #             'Kato_panCancer', 'Vanguri_NSCLC', 'Ravi_NSCLC', 'Pradat_panCancer']
+    datasets = ['Chowell_train', 'Chowell_test', 'MSK1', 'MSK2',
+                'Shim_NSCLC', 'Kato_panCancer']
     datasets_ids = list(range(1, len(datasets) + 1))
     
     # Load all data
