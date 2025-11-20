@@ -339,7 +339,7 @@ if __name__ == '__main__':
                         
                         x_aux = torch.from_numpy(x).float()
                         y_proba = tt_model(mps, x_aux).numpy()
-                        bacc, y_pred = balanced_accuracy(y[idx], y_proba[:, 1])
+                        bacc, y_pred = balanced_accuracy(y, y_proba[:, 1])
                         auc = roc_auc_score(y, y_proba[:, 1])
                         
                         bal_accs['all'] = bacc
