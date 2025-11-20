@@ -150,9 +150,8 @@ def train_vanilla(n_splits, n_repeats, scaler_type, l1, C,
             for dat_id in datasets_ids:
                 idx = z == dat_id
                 y_proba = model.predict_proba(x[idx])
-                y_pred = model.predict(x[idx])
                 
-                bacc = balanced_accuracy_score(y[idx], y_pred)
+                bacc, y_pred = balanced_accuracy(y[idx], y_proba[:, 1])
                 bal_accs[dat_id] = bacc
                 
                 auc = roc_auc_score(y[idx], y_proba[:, 1])
@@ -169,8 +168,7 @@ def train_vanilla(n_splits, n_repeats, scaler_type, l1, C,
                 print(counter)
             
             y_proba = model.predict_proba(x)
-            y_pred = model.predict(x)
-            bacc = balanced_accuracy_score(y, y_pred)
+            bacc, y_pred = balanced_accuracy(y, y_proba[:, 1])
             auc = roc_auc_score(y, y_proba[:, 1])
             
             bal_accs['all'] = bacc
@@ -338,9 +336,8 @@ def train_average(n_splits, n_repeats, n_models, scaler_type, l1, C,
             for dat_id in datasets_ids:
                 idx = z == dat_id
                 y_proba = model.predict_proba(x[idx])
-                y_pred = model.predict(x[idx])
                 
-                bacc = balanced_accuracy_score(y[idx], y_pred)
+                bacc, y_pred = balanced_accuracy(y[idx], y_proba[:, 1])
                 bal_accs[dat_id] = bacc
                 
                 auc = roc_auc_score(y[idx], y_proba[:, 1])
@@ -357,8 +354,7 @@ def train_average(n_splits, n_repeats, n_models, scaler_type, l1, C,
                 print(counter)
             
             y_proba = model.predict_proba(x)
-            y_pred = model.predict(x)
-            bacc = balanced_accuracy_score(y, y_pred)
+            bacc, y_pred = balanced_accuracy(y, y_proba[:, 1])
             auc = roc_auc_score(y, y_proba[:, 1])
             
             bal_accs['all'] = bacc

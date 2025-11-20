@@ -8,7 +8,7 @@ from collections import Counter
 
 from sklearn.model_selection import RepeatedStratifiedKFold
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
-from sklearn.metrics import balanced_accuracy_score, roc_auc_score, roc_curve
+from sklearn.metrics import roc_auc_score
 
 import numpy as np
 import torch
@@ -24,16 +24,6 @@ if torch.cuda.is_available():
 else:
     print('GPU is not available')
     device = torch.device('cpu')
-
-
-def balanced_accuracy(y_true, y_proba):
-    fpr, tpr, thresholds = roc_curve(y_true, y_proba)
-    youden = tpr - fpr
-    best_threshold = thresholds[np.argmax(youden)]
-    
-    y_pred = (y_proba >= best_threshold).astype(int)
-    bacc = balanced_accuracy_score(y_true, y_pred)
-    return bacc, y_pred
 
 
 def train_vanilla(n_splits, n_repeats, scaler_type, epsilon,

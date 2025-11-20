@@ -259,9 +259,8 @@ if __name__ == '__main__':
             for dat_id in datasets_ids:
                 idx = z == dat_id
                 y_proba = model.predict_proba(x[idx])
-                y_pred = model.predict(x[idx])
                 
-                bacc = balanced_accuracy_score(y[idx], y_pred)
+                bacc, y_pred = balanced_accuracy(y[idx], y_proba[:, 1])
                 bal_accs[dat_id] = bacc
                 
                 auc = roc_auc_score(y[idx], y_proba[:, 1])
@@ -278,8 +277,7 @@ if __name__ == '__main__':
                 print(counter)
             
             y_proba = model.predict_proba(x)
-            y_pred = model.predict(x)
-            bacc = balanced_accuracy_score(y, y_pred)
+            bacc, y_pred = balanced_accuracy(y, y_proba[:, 1])
             auc = roc_auc_score(y, y_proba[:, 1])
             
             bal_accs['all'] = bacc

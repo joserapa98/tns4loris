@@ -319,13 +319,9 @@ if __name__ == '__main__':
                         for dat_id in datasets_ids:
                             idx = z == dat_id
                             x_aux = torch.from_numpy(x[idx]).float()
-                            y_proba = tt_model(mps, x_aux)
-                            y_pred = (y_proba[:, 1] > 0.5).int()
+                            y_proba = tt_model(mps, x_aux).numpy()
                             
-                            y_proba = y_proba.numpy()
-                            y_pred = y_pred.numpy()
-                            
-                            bacc = balanced_accuracy_score(y[idx], y_pred)
+                            bacc, y_pred = balanced_accuracy(y[idx], y_proba[:, 1])
                             bal_accs[dat_id] = bacc
                             
                             auc = roc_auc_score(y[idx], y_proba[:, 1])
@@ -342,13 +338,8 @@ if __name__ == '__main__':
                             print(counter)
                         
                         x_aux = torch.from_numpy(x).float()
-                        y_proba = tt_model(mps, x_aux)
-                        y_pred = (y_proba[:, 1] > 0.5).int()
-                        
-                        y_proba = y_proba.numpy()
-                        y_pred = y_pred.numpy()
-                        
-                        bacc = balanced_accuracy_score(y, y_pred)
+                        y_proba = tt_model(mps, x_aux).numpy()
+                        bacc, y_pred = balanced_accuracy(y[idx], y_proba[:, 1])
                         auc = roc_auc_score(y, y_proba[:, 1])
                         
                         bal_accs['all'] = bacc
