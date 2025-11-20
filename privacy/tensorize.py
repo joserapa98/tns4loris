@@ -172,7 +172,7 @@ if __name__ == '__main__':
         yt_sketch = torch.from_numpy(y_sketch).float()
         
         for i in range(100):
-            print(comb, C, l1, i)
+            print(comb, n_bins, C, l1, i)
             
             cores_dir = os.path.join(tt_comb_dir,
                                      f'{n_bins}_{C}_{l1}_{i}_cores.pt')
@@ -189,19 +189,19 @@ if __name__ == '__main__':
                 # Check if resc_cores, bal_accs, auc_scores and results dirs exist
                 if not os.path.exists(resc_cores_dir):
                     raise ValueError(f'`resc_cores` dir doesn\'t exist for '
-                                     f'{n_bins, comb, C, l1, i}')
+                                     f'{comb, n_bins, C, l1, i}')
                 
                 if not os.path.exists(bal_accs_dir):
                     raise ValueError(f'`bal_accs` dir doesn\'t exist for '
-                                     f'{n_bins, comb, C, l1, i}')
+                                     f'{comb, n_bins, C, l1, i}')
                 
                 if not os.path.exists(auc_scores_dir):
                     raise ValueError(f'`auc_scores` dir doesn\'t exist for '
-                                     f'{n_bins, comb, C, l1, i}')
+                                     f'{comb, n_bins, C, l1, i}')
                 
                 if not os.path.exists(results_dir):
                     raise ValueError(f'`results` dir doesn\'t exist for '
-                                     f'{n_bins, comb, C, l1, i}')
+                                     f'{comb, n_bins, C, l1, i}')
                 
                 continue
             
