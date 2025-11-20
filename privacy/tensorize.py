@@ -74,7 +74,7 @@ if __name__ == '__main__':
         sys.exit()
     
     if len(args) == 3:
-        n_bins = int(args[0])    # [2, 4, 6]        -> 6
+        n_bins = int(args[0])    # [2, 4, 6, 10]    -> 6
         l1 = float(args[1])      # [0.0, 0.5, 1.0]  -> 1.0
         C = float(args[2])       # [0.1, 1.0, 10.0] -> 0.1
     else:

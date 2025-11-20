@@ -36,7 +36,7 @@
     python privacy/tensorize.py --<model_type> <n_bins> <l1> <C>
     ```
     - ``model_type = "vanilla", "average"``
-    - ``n_bins = 2, 4, 6``
+    - ``n_bins = 2, 4, 6, 10``
     - ``l1 = 0.0, 0.5, 1.0``
     - ``C = 0.1, 1.0, 10.0``
 
