@@ -3,13 +3,79 @@ import random
 from itertools import chain, combinations
 
 from sklearn import linear_model
+from sklearn.metrics import roc_curve, balanced_accuracy_score
 from diffprivlib import models as dp_models
 from scipy.interpolate import interp1d
 
 import pandas as pd
 import numpy as np
 import torch
+import torch.nn as nn
 
+
+# ---------
+# LR Models
+#----------
+
+def create_lr_model(l1, C):
+    model_class = linear_model.LogisticRegression
+    param_dict = {
+        'solver': 'saga',
+        'penalty': 'elasticnet',
+        'max_iter': 100,
+        'l1_ratio': l1, # Should be 1 (passed in args)
+        'class_weight': 'balanced',
+        'C': C, # Should be 0.1 (passed in args)
+    }
+    return model_class, param_dict
+
+
+def create_lr_dp_model(epsilon):
+    model_class = dp_models.LogisticRegression
+    param_dict = {
+        'max_iter': 100,
+        'epsilon': epsilon,
+    }
+    return model_class, param_dict
+
+
+# ---------
+# NN Models
+#----------
+
+class SimpleMLP(nn.Module):
+    def __init__(self, input_dim, hidden_sizes):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, hidden_sizes[0]),
+            nn.Tanh(),
+            nn.Linear(hidden_sizes[0], hidden_sizes[1]),
+            nn.Tanh(),
+            nn.Linear(hidden_sizes[1], 1),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+
+def create_nn_model():
+    """
+    Standard non-private MLP with fixed architecture.
+    """
+    model_class = SimpleMLP
+    param_dict = {
+            'max_iter': 100,
+            'hidden_layer_sizes': (19, 19),
+            'lr': 1e-3,
+            'weight_decay': 1e-05
+        }
+    return model_class, param_dict
+
+
+# -----------------
+# Utility functions
+# -----------------
 
 def move_to_cpu(obj):
     if torch.is_tensor(obj):
@@ -58,26 +124,14 @@ def load_data(cwd, in_features, out_feature, datasets, datasets_ids):
     return data_no_nans
 
 
-def create_lr_model(l1, C):
-    model_class = linear_model.LogisticRegression
-    param_dict = {
-        'solver': 'saga',
-        'penalty': 'elasticnet',
-        'max_iter': 100,
-        'l1_ratio': l1, # Should be 1 (passed in args)
-        'class_weight': 'balanced',
-        'C': C, # Should be 0.1 (passed in args)
-    }
-    return model_class, param_dict
-
-
-def create_lr_dp_model(epsilon):
-    model_class = dp_models.LogisticRegression
-    param_dict = {
-        'max_iter': 100,
-        'epsilon': epsilon,
-    }
-    return model_class, param_dict
+def balanced_accuracy(y_true, y_proba):
+    fpr, tpr, thresholds = roc_curve(y_true, y_proba)
+    youden = tpr - fpr
+    best_threshold = thresholds[np.argmax(youden)]
+    
+    y_pred = (y_proba >= best_threshold).astype(int)
+    bacc = balanced_accuracy_score(y_true, y_pred)
+    return bacc, y_pred
 
 
 def discretize(vector, n_bins=10):
