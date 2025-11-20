@@ -8,7 +8,7 @@ from collections import Counter
 
 from sklearn.model_selection import RepeatedStratifiedKFold
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
-from sklearn.metrics import balanced_accuracy_score, roc_auc_score
+from sklearn.metrics import balanced_accuracy_score, roc_auc_score, roc_curve
 
 import numpy as np
 import torch
@@ -24,6 +24,16 @@ if torch.cuda.is_available():
 else:
     print('GPU is not available')
     device = torch.device('cpu')
+
+
+def balanced_accuracy(y_true, y_proba):
+    fpr, tpr, thresholds = roc_curve(y_true, y_proba)
+    youden = tpr - fpr
+    best_threshold = thresholds[np.argmax(youden)]
+    
+    y_pred = (y_proba >= best_threshold).astype(int)
+    bacc = balanced_accuracy_score(y_true, y_pred)
+    return bacc, y_pred
 
 
 def train_vanilla(n_splits, n_repeats, scaler_type, epsilon,
@@ -150,9 +160,8 @@ def train_vanilla(n_splits, n_repeats, scaler_type, epsilon,
             for dat_id in datasets_ids:
                 idx = z == dat_id
                 y_proba = model.predict_proba(x[idx])
-                y_pred = model.predict(x[idx])
                 
-                bacc = balanced_accuracy_score(y[idx], y_pred)
+                bacc, y_pred = balanced_accuracy(y[idx], y_proba[:, 1])
                 bal_accs[dat_id] = bacc
                 
                 auc = roc_auc_score(y[idx], y_proba[:, 1])
@@ -169,8 +178,7 @@ def train_vanilla(n_splits, n_repeats, scaler_type, epsilon,
                 print(counter)
             
             y_proba = model.predict_proba(x)
-            y_pred = model.predict(x)
-            bacc = balanced_accuracy_score(y, y_pred)
+            bacc, y_pred = balanced_accuracy(y, y_proba[:, 1])
             auc = roc_auc_score(y, y_proba[:, 1])
             
             bal_accs['all'] = bacc
@@ -338,9 +346,8 @@ def train_average(n_splits, n_repeats, n_models, scaler_type, epsilon,
             for dat_id in datasets_ids:
                 idx = z == dat_id
                 y_proba = model.predict_proba(x[idx])
-                y_pred = model.predict(x[idx])
                 
-                bacc = balanced_accuracy_score(y[idx], y_pred)
+                bacc, y_pred = balanced_accuracy(y[idx], y_proba[:, 1])
                 bal_accs[dat_id] = bacc
                 
                 auc = roc_auc_score(y[idx], y_proba[:, 1])
@@ -357,8 +364,7 @@ def train_average(n_splits, n_repeats, n_models, scaler_type, epsilon,
                 print(counter)
             
             y_proba = model.predict_proba(x)
-            y_pred = model.predict(x)
-            bacc = balanced_accuracy_score(y, y_pred)
+            bacc, y_pred = balanced_accuracy(y, y_proba[:, 1])
             auc = roc_auc_score(y, y_proba[:, 1])
             
             bal_accs['all'] = bacc
