@@ -16,6 +16,9 @@ from torch.utils.data import TensorDataset, DataLoader
 import torch.optim as optim
 import torch
 
+from opacus import PrivacyEngine
+from opacus.accountants.analysis import rdp as privacy_analysis
+
 from utils import *
 
 
@@ -29,14 +32,15 @@ else:
     device = torch.device('cpu')
 
 
-def train_model(n_splits, n_repeats, all_data, featuresNA, phenoNA, datasets_ids):
+def train_model(n_splits, n_repeats, epsilon, all_data, featuresNA, phenoNA,
+                datasets_ids):
     x = all_data[featuresNA].values
     y = all_data[phenoNA].values
     z = all_data['DatasetNum'].values
     y_z = np.array([f'{a}_{b}' for a, b in zip(y, z)])
     
     # Train
-    models_dir = os.path.join(cwd, 'privacy', 'results', 'models', 'nn')
+    models_dir = os.path.join(cwd, 'privacy', 'results', 'models', 'nn_dp')
     os.makedirs(models_dir, exist_ok=True)
     
     all_combs = all_combinations(datasets_ids)
@@ -98,15 +102,31 @@ def train_model(n_splits, n_repeats, all_data, featuresNA, phenoNA, datasets_ids
             lr = param_dict['lr']
             weight_decay = param_dict['weight_decay']
             
+            max_grad_norm = 1.0
+            delta = 1e-5
+            
             batch_size = 32
             train_loader = DataLoader(dataset,
                                       batch_size=batch_size,
                                       shuffle=True)
             
             criterion = nn.BCELoss()
-            optimizer = optim.Adam(model.parameters(),
-                                   lr=lr,
-                                   weight_decay=weight_decay)
+            optimizer = optim.SGD(model.parameters(),
+                                  lr=lr,
+                                  weight_decay=weight_decay)
+            
+            # Attach PrivacyEngine AFTER optimizer creation
+            privacy_engine = PrivacyEngine()
+            
+            model, optimizer, train_loader = privacy_engine.make_private_with_epsilon(
+                module=model,
+                optimizer=optimizer,
+                data_loader=train_loader,
+                target_epsilon=epsilon,
+                target_delta=delta,
+                epochs=n_epochs,
+                max_grad_norm=max_grad_norm,
+            )
 
             for _ in range(n_epochs):
                 for aux_x, aux_y in train_loader:
@@ -124,6 +144,9 @@ def train_model(n_splits, n_repeats, all_data, featuresNA, phenoNA, datasets_ids
             # Save model's parameters
             model.cpu()
             torch.save([p.data for p in model.parameters()], params_dir)
+            
+            eps_spent = privacy_engine.get_epsilon(delta)
+            print('epsilon:', eps_spent)
 
             # Evaluate final model by dataset
             # NOTE: Load dataset to check it works
@@ -204,13 +227,15 @@ if __name__ == '__main__':
               '\t--help, -h')
         sys.exit(2)
     
-    if len(args) == 2:
+    if len(args) == 3:
         n_splits = int(args[0])   # 5
         n_repeats = int(args[1])  # 20
+        epsilon = float(args[2])  # 1.0
     else:
         print('In "vanilla" mode the following arguments should be passed:\n'
-                '\t1) <n_splits> => number of splits\n'
-                '\t2) <n_repeats> => number of repeats of K-fold\n')
+              '\t1) <n_splits> => number of splits\n'
+              '\t2) <n_repeats> => number of repeats of K-fold\n'
+              '\t3) <epsilon> => privacy budget\n')
         sys.exit()
     
     # Load data
@@ -231,6 +256,7 @@ if __name__ == '__main__':
     
     train_model(n_splits=n_splits,
                 n_repeats=n_repeats,
+                epsilon=epsilon,
                 all_data=all_data,
                 featuresNA=featuresNA,
                 phenoNA=phenoNA,
