@@ -32,7 +32,7 @@ else:
     device = torch.device('cpu')
 
 
-def train_model(n_splits, n_repeats, epsilon, all_data, featuresNA, phenoNA,
+def train_model(n_splits, n_repeats, sigma, all_data, featuresNA, phenoNA,
                 datasets_ids):
     x = all_data[featuresNA].values
     y = all_data[phenoNA].values
@@ -59,24 +59,29 @@ def train_model(n_splits, n_repeats, epsilon, all_data, featuresNA, phenoNA,
         for i, (train_idx, _) in enumerate(kf.split(x, y_z)):
             print(comb, i)
             
-            params_dir = os.path.join(comb_dir, f'{i}_params.pt')
-            bal_accs_dir = os.path.join(comb_dir, f'{i}_bal_accs.json')
-            auc_scores_dir = os.path.join(comb_dir, f'{i}_auc_scores.json')
-            results_dir = os.path.join(comb_dir, f'{i}_results.pkl')
+            params_dir = os.path.join(comb_dir, f'{sigma}_{i}_params.pt')
+            epsilon_dir = os.path.join(comb_dir, f'{sigma}_{i}_epsilon.json')
+            bal_accs_dir = os.path.join(comb_dir, f'{sigma}_{i}_bal_accs.json')
+            auc_scores_dir = os.path.join(comb_dir, f'{sigma}_{i}_auc_scores.json')
+            results_dir = os.path.join(comb_dir, f'{sigma}_{i}_results.pkl')
             
             if os.path.exists(params_dir):
-                # Check if resc_params, bal_accs, auc_scores and results dirs exist
+                # Check if epsilon, bal_accs, auc_scores and results dirs exist
+                if not os.path.exists(epsilon_dir):
+                    raise ValueError(f'`epsilon` dir doesn\'t exist for '
+                                     f'{comb, sigma, i}')
+                    
                 if not os.path.exists(bal_accs_dir):
                     raise ValueError(f'`bal_accs` dir doesn\'t exist for '
-                                     f'{comb, i}')
+                                     f'{comb, sigma, i}')
                 
                 if not os.path.exists(auc_scores_dir):
                     raise ValueError(f'`auc_scores` dir doesn\'t exist for '
-                                     f'{comb, i}')
+                                     f'{comb, sigma, i}')
                 
                 if not os.path.exists(results_dir):
                     raise ValueError(f'`results` dir doesn\'t exist for '
-                                     f'{comb, i}')
+                                     f'{comb, sigma, i}')
                 
                 continue
             
@@ -94,16 +99,17 @@ def train_model(n_splits, n_repeats, epsilon, all_data, featuresNA, phenoNA,
             dataset = TensorDataset(xt_train, yt_train)
             
             # Train the model
-            model = model_type(input_dim=x.shape[1],
+            model = model_type(input_dim=xt_train.shape[1],
                                hidden_sizes=param_dict['hidden_layer_sizes'])
             model.to(device)
             
-            n_epochs = param_dict['max_iter']
+            n_epochs = param_dict['max_iter'] // 2  # 50
             lr = param_dict['lr']
             weight_decay = param_dict['weight_decay']
             
             max_grad_norm = 1.0
-            delta = 1e-5
+            delta = 1e-4
+            noise_multiplier = sigma  # [20.0, 5.0, 1.0, 0.0]
             
             batch_size = 32
             train_loader = DataLoader(dataset,
@@ -111,20 +117,18 @@ def train_model(n_splits, n_repeats, epsilon, all_data, featuresNA, phenoNA,
                                       shuffle=True)
             
             criterion = nn.BCELoss()
-            optimizer = optim.SGD(model.parameters(),
-                                  lr=lr,
-                                  weight_decay=weight_decay)
+            optimizer = optim.Adam(model.parameters(),
+                                   lr=lr,
+                                   weight_decay=weight_decay)
             
             # Attach PrivacyEngine AFTER optimizer creation
             privacy_engine = PrivacyEngine()
             
-            model, optimizer, train_loader = privacy_engine.make_private_with_epsilon(
+            model, optimizer, train_loader = privacy_engine.make_private(
                 module=model,
                 optimizer=optimizer,
                 data_loader=train_loader,
-                target_epsilon=epsilon,
-                target_delta=delta,
-                epochs=n_epochs,
+                noise_multiplier=noise_multiplier,
                 max_grad_norm=max_grad_norm,
             )
 
@@ -145,8 +149,14 @@ def train_model(n_splits, n_repeats, epsilon, all_data, featuresNA, phenoNA,
             model.cpu()
             torch.save([p.data for p in model.parameters()], params_dir)
             
-            eps_spent = privacy_engine.get_epsilon(delta)
-            print('epsilon:', eps_spent)
+            if sigma > 0:
+                epsilon = privacy_engine.get_epsilon(delta)
+            else:
+                epsilon = float('inf')
+            print('epsilon:', epsilon)
+            
+            with open(epsilon_dir, 'w') as file:
+                json.dump({'epsilon': epsilon}, file, indent=4)
 
             # Evaluate final model by dataset
             # NOTE: Load dataset to check it works
@@ -168,6 +178,7 @@ def train_model(n_splits, n_repeats, epsilon, all_data, featuresNA, phenoNA,
                     idx = z == dat_id
                     x_aux = torch.from_numpy(x[idx]).float()
                     y_proba = model(x_aux).numpy()
+                    # print(y[idx], y_proba)
                     
                     bacc, y_pred = balanced_accuracy(y[idx], y_proba)
                     bal_accs[dat_id] = bacc
@@ -230,12 +241,12 @@ if __name__ == '__main__':
     if len(args) == 3:
         n_splits = int(args[0])   # 5
         n_repeats = int(args[1])  # 20
-        epsilon = float(args[2])  # 1.0
+        sigma = float(args[2])  # 1.0
     else:
         print('In "vanilla" mode the following arguments should be passed:\n'
               '\t1) <n_splits> => number of splits\n'
               '\t2) <n_repeats> => number of repeats of K-fold\n'
-              '\t3) <epsilon> => privacy budget\n')
+              '\t3) <sigma> => noise multiplier\n')
         sys.exit()
     
     # Load data
@@ -256,7 +267,7 @@ if __name__ == '__main__':
     
     train_model(n_splits=n_splits,
                 n_repeats=n_repeats,
-                epsilon=epsilon,
+                sigma=sigma,
                 all_data=all_data,
                 featuresNA=featuresNA,
                 phenoNA=phenoNA,
