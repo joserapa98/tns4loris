@@ -442,10 +442,10 @@ def create_datasets_tt(model_name):
                 'bin_scores': all_bin_scores_bins
             }
 
-            torch.save(data, data_dir_bins)
+            torch.save(data_bins, data_dir_bins)
         
         else:
-            data = torch.load(data_dir_bins, weights_only=True)
+            data_bins = torch.load(data_dir_bins, weights_only=True)
         
         all_labels.append(data_bins['labels'])
         all_cores.append(data_bins['cores'])
