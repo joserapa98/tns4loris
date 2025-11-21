@@ -1,5 +1,6 @@
 # Guide to reproduce experiments:
 
+## LR models
 
 1. Train vanilla/average LR models:
     ```
@@ -29,7 +30,7 @@
     - ``n_splits = 5``
     - ``n_repeats = 20``
     - ``scaler_type = "standard"``
-    - ``epsilon = 0.1, 1.0, 10.0, 100.0, inf``
+    - ``epsilon = 0.1, 1.0, 10.0, inf``
 
 
 3. Tensorize vanilla LR models:
@@ -40,6 +41,8 @@
     - ``l1 = 0.0, 0.5, 1.0``
     - ``C = 0.1, 1.0, 10.0``
 
+
+## NN models
 
 4. Train NN models:
     ```
@@ -65,11 +68,22 @@
     - ``n_bins = 2, 6, 10``
 
 
-7. Train attacker models:
+## Attacks
+
+7. Train attacks for LR models:
     ```
-    python privacy/attacks.py --<model_type> --<attack_type> <model_name>
+    python privacy/attacks_lr.py --<model_type> --<attack_type> <model_name>
     ```
 
     - ``model_type = "vanilla", "average"``
     - ``attack_type = "bb", "wb"``
-    - ``model_name = "lr", "lr_priv", "lr_dp", "tt"``
+    - ``model_name = "lr", "lr_priv", "lr_dp", "tt_lr"``
+
+
+8. Train attacks for NN models:
+    ```
+    python privacy/attacks.py --<attack_type> <model_name>
+    ```
+
+    - ``attack_type = "bb", "wb"``
+    - ``model_name = "nn", "nn_dp", "tt_nn"``
