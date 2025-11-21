@@ -159,14 +159,6 @@ def train_model(n_splits, n_repeats, sigma, all_data, featuresNA, phenoNA,
                 json.dump({'epsilon': epsilon}, file, indent=4)
 
             # Evaluate final model by dataset
-            # NOTE: Load dataset to check it works
-            # model = model_type(input_dim=x.shape[1],
-            #                    hidden_sizes=param_dict['hidden_layer_sizes'])
-            # params_list = torch.load(params_dir)
-            
-            # for p, loaded_p in zip(model.parameters(), params_list):
-            #     p.data.copy_(loaded_p)
-            
             model.eval()
             
             bal_accs = {}
@@ -218,8 +210,6 @@ def train_model(n_splits, n_repeats, sigma, all_data, featuresNA, phenoNA,
             
             # Save results
             joblib.dump(results, results_dir)
-            
-            # raise ValueError('Stop here for debug purposes')
 
 
 if __name__ == '__main__':
@@ -241,7 +231,7 @@ if __name__ == '__main__':
     if len(args) == 3:
         n_splits = int(args[0])   # 5
         n_repeats = int(args[1])  # 20
-        sigma = float(args[2])  # 1.0
+        sigma = float(args[2])    # [20.0, 5.0, 1.0, 0.0]
     else:
         print('In "vanilla" mode the following arguments should be passed:\n'
               '\t1) <n_splits> => number of splits\n'

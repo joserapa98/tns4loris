@@ -125,15 +125,7 @@ def train_model(n_splits, n_repeats, all_data, featuresNA, phenoNA, datasets_ids
             model.cpu()
             torch.save([p.data for p in model.parameters()], params_dir)
 
-            # Evaluate final model by dataset
-            # NOTE: Load dataset to check it works
-            # model = model_type(input_dim=x.shape[1],
-            #                    hidden_sizes=param_dict['hidden_layer_sizes'])
-            # params_list = torch.load(params_dir)
-            
-            # for p, loaded_p in zip(model.parameters(), params_list):
-            #     p.data.copy_(loaded_p)
-            
+            # Evaluate final model by dataset          
             model.eval()
             
             bal_accs = {}
@@ -184,8 +176,6 @@ def train_model(n_splits, n_repeats, all_data, featuresNA, phenoNA, datasets_ids
             
             # Save results
             joblib.dump(results, results_dir)
-            
-            # raise ValueError('Stop here for debug purposes')
 
 
 if __name__ == '__main__':
