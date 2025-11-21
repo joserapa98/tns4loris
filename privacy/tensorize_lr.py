@@ -142,10 +142,9 @@ if __name__ == '__main__':
     # Tensorize
     aux_models_dir = os.path.join(cwd, 'privacy', 'results', 'models',
                                   'lr', scaler_type, model_type)
-    os.makedirs(aux_models_dir, exist_ok=True)
     
     tt_models_dir = os.path.join(cwd, 'privacy', 'results', 'models',
-                                 'tt', scaler_type, model_type)
+                                 'tt_lr', scaler_type, model_type)
     os.makedirs(tt_models_dir, exist_ok=True)
     
     all_combs = all_combinations(datasets_ids)
@@ -153,7 +152,9 @@ if __name__ == '__main__':
     for comb in all_combs:
         aux_comb_dir = os.path.join(aux_models_dir,
                                     '_'.join([str(c) for c in comb]))
-        os.makedirs(aux_comb_dir, exist_ok=True)
+        if not os.path.exists(aux_comb_dir):
+            raise ValueError(f'Pre-trained LR models for combination {comb} '
+                             f'do not exist')
         
         tt_comb_dir = os.path.join(tt_models_dir,
                                    '_'.join([str(c) for c in comb]))

@@ -34,58 +34,22 @@ if __name__ == '__main__':
     if len(argv) == 1:
         print('No argumets were passed')
         print('Available options are:\n'
-              '\t--help, -h\n'
-              '\t--vanilla\n'
-              '\t--average')
+              '\t--help, -h')
         sys.exit()
       
     # Read options and arguments
     try:
-        opts, args = getopt.getopt(argv[1:], 'h', ['help', 'vanilla', 'average'])
+        opts, args = getopt.getopt(argv[1:], 'h', ['help'])
     except getopt.GetoptError:
         print('Available options are:\n'
-              '\t--help, -h\n'
-              '\t--vanilla\n'
-              '\t--average')
+              '\t--help, -h')
         sys.exit(2)
     
-    # Save selected options
-    options = {'vanilla': False,
-               'average': False}
-    
-    for opt, arg in opts:
-        if (opt == '-h') or (opt == '--help'):
-            print('Available options are:\n'
-                  '\t--help, -h\n'
-                  '\t--vanilla\n'
-                  '\t--average')
-            sys.exit()
-        elif opt == '--vanilla':
-            options['vanilla'] = True
-        elif opt == '--average':
-            options['average'] = True
-    
-    # Check if selected options are compatible
-    if options['vanilla'] and options['average']:
-        print('Options "vanilla" and "average" are incompatible')
-        sys.exit()
-    elif not (options['vanilla'] or options['average']):
-        print('One of the options "vanilla" and "average" should be chosen')
-        sys.exit()
-    
-    if len(args) == 3:
+    if len(args) == 1:
         n_bins = int(args[0])    # [2, 4, 6, 10]    -> 6
-        l1 = float(args[1])      # [0.0, 0.5, 1.0]  -> 1.0
-        C = float(args[2])       # [0.1, 1.0, 10.0] -> 0.1
     else:
         print('The following arguments should be passed:\n'
-              '\t1) <n_bins> => number of bins for discretization\n'
-              '\t2) <l1> => l1 regularization weight\n'
-              '\t3) <C> => inverse of total regularization weight\n')
-    
-    # We should use scaler_type = "standard"
-    scaler_type = 'standard'
-    model_type = 'vanilla' if options['vanilla'] else 'average'
+              '\t1) <n_bins> => number of bins for discretization\n')
     
     # Load data
     featuresNA = ['TMB', 'Systemic_therapy_history', 'Albumin', 'NLR', 'Age',
@@ -109,10 +73,10 @@ if __name__ == '__main__':
     z = all_data['DatasetNum'].values
     
     # Tensorization hyperparameters
-    sketch_size    = 50
+    sketch_size    = 80
     phys_dim       = 2
-    domain         = torch.linspace(0, 1, phys_dim) if scaler_type == 'minmax' else None
-    bond_dim       = 2
+    domain         = None
+    bond_dim       = 5
     cum_percentage = 1 - 1e-2
     batch_size     = 1000
     device         = torch.device('cpu')
@@ -122,15 +86,15 @@ if __name__ == '__main__':
         return tk.embeddings.poly(data, degree=phys_dim - 1).float()
     
     # Initialize the model
-    aux_model_class, aux_param_dict = create_lr_model(1.0, 0.1)
-    aux_model = aux_model_class(**aux_param_dict)
-    aux_model.classes_ = np.array([0, 1])
+    aux_model_class, aux_param_dict = create_nn_model()
+    aux_model = aux_model_class(input_dim=x.shape[1],
+                                hidden_sizes=aux_param_dict['hidden_layer_sizes'])
     
+    @torch.no_grad()
     def fn_model(data):
         # Get probabilities (numpy)
-        y_proba = aux_model.predict_proba(data)
-        y_proba = torch.from_numpy(y_proba).float()
-        
+        y_proba = aux_model(data)
+        y_proba = torch.cat([1 - y_proba, y_proba], dim=1)
         discr_out = discretize(vector=y_proba, n_bins=n_bins)
         return discr_out.sqrt()
     
@@ -140,12 +104,9 @@ if __name__ == '__main__':
         return y_proba
     
     # Tensorize
-    aux_models_dir = os.path.join(cwd, 'privacy', 'results', 'models',
-                                  'lr', scaler_type, model_type)
-    os.makedirs(aux_models_dir, exist_ok=True)
+    aux_models_dir = os.path.join(cwd, 'privacy', 'results', 'models', 'nn')
     
-    tt_models_dir = os.path.join(cwd, 'privacy', 'results', 'models',
-                                 'tt', scaler_type, model_type)
+    tt_models_dir = os.path.join(cwd, 'privacy', 'results', 'models', 'tt_nn')
     os.makedirs(tt_models_dir, exist_ok=True)
     
     all_combs = all_combinations(datasets_ids)
@@ -153,7 +114,9 @@ if __name__ == '__main__':
     for comb in all_combs:
         aux_comb_dir = os.path.join(aux_models_dir,
                                     '_'.join([str(c) for c in comb]))
-        os.makedirs(aux_comb_dir, exist_ok=True)
+        if not os.path.exists(aux_comb_dir):
+            raise ValueError(f'Pre-trained NN models for combination {comb} '
+                             f'do not exist')
         
         tt_comb_dir = os.path.join(tt_models_dir,
                                    '_'.join([str(c) for c in comb]))
@@ -164,59 +127,44 @@ if __name__ == '__main__':
         x_sketch = x[train_idx_comb]
         y_sketch = y[train_idx_comb]
         
-        # Scale data
-        scaler = MinMaxScaler() if scaler_type == 'minmax' else StandardScaler()
-        x_sketch = scaler.fit_transform(x_sketch)
-        
         xt_sketch = torch.from_numpy(x_sketch).float()
         yt_sketch = torch.from_numpy(y_sketch).float()
         
         for i in range(100):
-            print(comb, n_bins, C, l1, i)
+            print(comb, n_bins, i)
             
             cores_dir = os.path.join(tt_comb_dir,
-                                     f'{n_bins}_{C}_{l1}_{i}_cores.pt')
-            resc_cores_dir = os.path.join(tt_comb_dir,
-                                          f'{n_bins}_{C}_{l1}_{i}_resc_cores.pt')
+                                     f'{n_bins}_{i}_cores.pt')
             bal_accs_dir = os.path.join(tt_comb_dir,
-                                        f'{n_bins}_{C}_{l1}_{i}_bal_accs.json')
+                                        f'{n_bins}_{i}_bal_accs.json')
             auc_scores_dir = os.path.join(tt_comb_dir,
-                                          f'{n_bins}_{C}_{l1}_{i}_auc_scores.json')
+                                          f'{n_bins}_{i}_auc_scores.json')
             results_dir = os.path.join(tt_comb_dir,
-                                       f'{n_bins}_{C}_{l1}_{i}_results.pkl')
+                                       f'{n_bins}_{i}_results.pkl')
             
             if os.path.exists(cores_dir):
-                # Check if resc_cores, bal_accs, auc_scores and results dirs exist
-                if not os.path.exists(resc_cores_dir):
-                    raise ValueError(f'`resc_cores` dir doesn\'t exist for '
-                                     f'{comb, n_bins, C, l1, i}')
-                
+                # Check if bal_accs, auc_scores and results dirs exist
                 if not os.path.exists(bal_accs_dir):
                     raise ValueError(f'`bal_accs` dir doesn\'t exist for '
-                                     f'{comb, n_bins, C, l1, i}')
+                                     f'{comb, n_bins, i}')
                 
                 if not os.path.exists(auc_scores_dir):
                     raise ValueError(f'`auc_scores` dir doesn\'t exist for '
-                                     f'{comb, n_bins, C, l1, i}')
+                                     f'{comb, n_bins, i}')
                 
                 if not os.path.exists(results_dir):
                     raise ValueError(f'`results` dir doesn\'t exist for '
-                                     f'{comb, n_bins, C, l1, i}')
+                                     f'{comb, n_bins, i}')
                 
                 continue
             
-            # Load pre-trained LR
-            aux_params_dir = os.path.join(aux_comb_dir,
-                                          f'{C}_{l1}_{i}_params.pkl')
-            aux_params = joblib.load(aux_params_dir)
-            
-            # Split into coefs and intercept
-            aux_coefs = aux_params[:-1].unsqueeze(0).numpy()  # shape (1, n_features)
-            aux_intercept = aux_params[-1:].numpy()           # shape (1,)
+            # Load pre-trained NN
+            aux_params_dir = os.path.join(aux_comb_dir, f'{i}_params.pt')
+            aux_params = torch.load(aux_params_dir, weights_only=True)
 
             # Manually set parameters
-            aux_model.coef_ = aux_coefs
-            aux_model.intercept_ = aux_intercept
+            for p, loaded_p in zip(aux_model.parameters(), aux_params):
+                p.data.copy_(loaded_p)
             
             # Repeat tensorization until model returns no NaNs
             success = False
@@ -240,55 +188,7 @@ if __name__ == '__main__':
                 for j in range(len(mps.mats_env) - 1):
                     mps.mats_env[j]['right'].change_size(size=bond_dim)
                 
-                # Save model's parameters
-                cores = [c.detach() for c in mps.tensors]
-                torch.save(cores, cores_dir)
-                
-                # Weight and range to rescale parameters
-                if scaler_type == "standard":
-                    scaler_info = {
-                        'mean': scaler.mean_,
-                        'scale': scaler.scale_
-                    }
-                elif scaler_type == "minmax":
-                    scaler_info = {
-                        'mean': scaler.data_min_,
-                        'scale': scaler.data_range_
-                    }
-                else:
-                    raise ValueError(
-                        'scaler_type must be "standard" or "minmax"')
-                
-                mean = torch.from_numpy(scaler_info['mean'])
-                scale = torch.from_numpy(scaler_info['scale'])
-                
-                # Rescale cores
-                resc_cores = []
-                for i in range(len(cores)):
-                    aux_core = cores[i].clone()
-                    
-                    if i < (len(cores) // 2):
-                        j = i
-                    elif i == (len(cores) // 2):
-                        resc_cores.append(aux_core)
-                        continue
-                    else:
-                        j = i - 1
-                    
-                    # Assuming phys_dim = 2
-                    if i == 0:
-                        aux_core[0, :] = aux_core[0, :] - \
-                            (mean[j] / scale[j]) * aux_core[1, :]
-                        aux_core[1, :] = (1 / scale[j]) * aux_core[1, :]
-                    else:
-                        aux_core[:, 0] = aux_core[:, 0] - \
-                            (mean[j] / scale[j]) * aux_core[:, 1]
-                        aux_core[:, 1] = (1 / scale[j]) * aux_core[:, 1]
-                    
-                    resc_cores.append(aux_core)
-                
                 # Randomize gauge
-                mps = tk.models.MPSLayer(tensors=resc_cores)
                 for j, node in enumerate(mps.mats_env):
                     right_size = node.size('right')
                     # U = random_unitary(right_size)
@@ -303,9 +203,9 @@ if __name__ == '__main__':
                     prev_U = torch.linalg.inv(U)
                     # print(U @ prev_U)
                 
-                # Save rescaled parameters
-                resc_cores = [c.detach() for c in mps.tensors]
-                torch.save(resc_cores, resc_cores_dir)
+                # Save model's parameters
+                cores = [c.detach() for c in mps.tensors]
+                torch.save(cores, cores_dir)
                 
                 mps.trace(torch.zeros(1, xt_sketch.size(1), phys_dim))
 
