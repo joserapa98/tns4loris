@@ -79,7 +79,7 @@ if __name__ == '__main__':
     bond_dim       = 5
     cum_percentage = 1 - 1e-2
     batch_size     = 1000
-    device         = torch.device('cpu')
+    # device         = torch.device('cpu')
     verbose        = False
     
     def embedding(data):
@@ -89,6 +89,7 @@ if __name__ == '__main__':
     aux_model_class, aux_param_dict = create_nn_model()
     aux_model = aux_model_class(input_dim=x.shape[1],
                                 hidden_sizes=aux_param_dict['hidden_layer_sizes'])
+    aux_model.to(device)
     
     @torch.no_grad()
     def fn_model(data):
