@@ -13,7 +13,10 @@ including training LR models, tensorizing such models, and training DP LR models
 - tensorkrowch == 1.1.5  
 
 **Differentially private LR models**
-- diffprivlib == 0.6.6  
+- diffprivlib == 0.6.6
+
+**Differentially private NN models**
+- opacus == 1.5.4
 
 **Machine learning packages**
 - torch == 2.6.0  
