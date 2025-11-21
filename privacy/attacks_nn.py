@@ -82,7 +82,7 @@ def create_datasets_nn(model_name):
                                 hidden_sizes=param_dict['hidden_layer_sizes'])
             
             for i in range(100):
-                params_file = f'{i}_params.pkl'
+                params_file = f'{i}_params.pt'
                 bal_accs_file = f'{i}_bal_accs.json'
                 auc_scores_file = f'{i}_auc_scores.json'
                 
@@ -126,7 +126,7 @@ def create_datasets_nn(model_name):
                 all_auc_scores.append(auc_scores_vector)
                 
                 # out scores
-                out_scores = model(xt_test).flatten()
+                out_scores = model(xt_test).flatten().detach()
                 all_out_scores.append(out_scores)
                 
                 # bin scores
@@ -213,7 +213,7 @@ def create_datasets_dp(model_name):
                 
                 comb_dir = os.path.join(models_dir, comb)
                 for i in range(100):
-                    params_file = f'{sigma}_{i}_params.pkl'
+                    params_file = f'{sigma}_{i}_params.pt'
                     epsilon_file = f'{sigma}_{i}_epsilon.json'
                     bal_accs_file = f'{sigma}_{i}_bal_accs.json'
                     auc_scores_file = f'{sigma}_{i}_auc_scores.json'
@@ -235,7 +235,7 @@ def create_datasets_dp(model_name):
                     
                     # epsilon
                     epsilon_dir = os.path.join(comb_dir, epsilon_file)
-                    with open(bal_accs_dir, 'r') as f:
+                    with open(epsilon_dir, 'r') as f:
                         epsilon_dict = json.load(f)
                     epsilon_value = epsilon_dict['epsilon']
                     all_epsilon_sigma.append(torch.tensor([epsilon_value]).float())
@@ -265,7 +265,7 @@ def create_datasets_dp(model_name):
                     all_auc_scores_sigma.append(auc_scores_vector)
                     
                     # out scores
-                    out_scores = model(xt_test).flatten()
+                    out_scores = model(xt_test).flatten().detach()
                     all_out_scores_sigma.append(out_scores)
                     
                     # bin scores
