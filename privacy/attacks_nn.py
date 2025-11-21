@@ -366,7 +366,7 @@ def create_datasets_tt(model_name):
                 
                 comb_dir = os.path.join(models_dir, comb)
                 for i in range(100):
-                    cores_file = f'{n_bins}_{i}_resc_cores.pt'
+                    cores_file = f'{n_bins}_{i}_cores.pt'
                     bal_accs_file = f'{n_bins}_{i}_bal_accs.json'
                     auc_scores_file = f'{n_bins}_{i}_auc_scores.json'
                     
