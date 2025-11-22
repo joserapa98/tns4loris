@@ -5,7 +5,7 @@ import random
 
 from sklearn import linear_model
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
-from sklearn.metrics import roc_curve, accuracy_score, balanced_accuracy_score
+from sklearn.metrics import accuracy_score, balanced_accuracy_score
 from sklearn.model_selection import RepeatedStratifiedKFold
 
 from scipy.interpolate import interp1d
@@ -14,6 +14,9 @@ import pandas as pd
 import numpy as np
 
 import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader, TensorDataset
 import tensorkrowch as tk
 from tensorkrowch.decompositions import tt_rss
 
@@ -219,30 +222,6 @@ def discretize(vector, n_bins=10):
     return result
 
 
-#--------------------- Accuracies -----------------------------
-
-def acc_score(y_true, y_proba, threshold=None):
-    if not threshold:
-        fpr, tpr, thresholds = roc_curve(y_true, y_proba)
-        youden = tpr - fpr
-        threshold = thresholds[np.argmax(youden)]
-    
-    y_pred = (y_proba >= threshold).astype(int)
-    acc = accuracy_score(y_true, y_pred)
-    return acc, y_pred, threshold
-
-
-def bal_acc_score(y_true, y_proba, threshold=None):
-    if not threshold:
-        fpr, tpr, thresholds = roc_curve(y_true, y_proba)
-        youden = tpr - fpr
-        threshold = thresholds[np.argmax(youden)]
-    
-    y_pred = (y_proba >= threshold).astype(int)
-    bacc = balanced_accuracy_score(y_true, y_pred)
-    return bacc, y_pred, threshold
-
-
 #------------------ Show accuracies -----------------------------------
 
 def print_correct_preds(y_true, y_pred):
@@ -273,10 +252,11 @@ def evaluate_by_cancertype(model, x_train, y_train, scalers_dict):
         aux_x_train = x_train[mask]
         aux_y_train = y_train[mask]
         
-        y_proba = model(aux_x_train)[:, 1]
+        y_pred = model(aux_x_train)
+        _, y_pred = y_pred.max(dim=1)
         
-        train_acc, y_pred, threshold = acc_score(aux_y_train, y_proba)
-        train_bal_acc, _, _ = bal_acc_score(aux_y_train, y_proba, threshold)
+        train_acc = accuracy_score(aux_y_train, y_pred)
+        train_bal_acc = balanced_accuracy_score(aux_y_train, y_pred)
         print(f'{cond_features[cancer_idx]}: '
               f'Train accuracy: {train_acc:.2f}, '
               f'Train balanced accuracy: {train_bal_acc:.2f}')
@@ -333,16 +313,16 @@ def train_lr_model(model_type, x_train, y_train, x_test, y_test):
         raise ValueError('`model_type` should be "vanilla" or "average"')
     
     # Accuracy
-    y_proba_train_lr = model.predict_proba(x_train)
-    y_proba_test_lr = model.predict_proba(x_test)
+    y_train_lr = model.predict(x_train)
+    y_test_lr = model.predict(x_test)
     
-    train_acc, y_train_lr, threshold = acc_score(y_train, y_proba_train_lr)
-    test_acc, y_test_lr, _ = acc_score(y_test, y_proba_test_lr, threshold)
+    train_acc = accuracy_score(y_train, y_train_lr)
+    test_acc = accuracy_score(y_test, y_test_lr)
     print(f'Accuracy: '
           f'Train: {train_acc:.2f}, Test: {test_acc:.2f}')
     
-    train_bal_acc, _, _ = bal_acc_score(y_train, y_proba_train_lr, threshold)
-    test_bal_acc, _, _ = bal_acc_score(y_test, y_proba_test_lr, threshold)
+    train_bal_acc = balanced_accuracy_score(y_train, y_train_lr)
+    test_bal_acc = balanced_accuracy_score(y_test, y_test_lr)
     print(f'Balanced accuracy: '
           f'Train: {train_bal_acc:.2f}, Test: {test_bal_acc:.2f}')
     
@@ -369,6 +349,115 @@ def load_lr(filepath):
     model.coef_ = params[:-1].unsqueeze(0).numpy()
     model.intercept_ = params[-1:].numpy()
     model.classes_ = np.array([0, 1])  # assumes binary classification
+    return model
+
+
+#------------------ Train NN model ------------------------------------
+
+class SimpleMLP(nn.Module):
+    def __init__(self, input_dim, hidden_sizes):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, hidden_sizes[0]),
+            nn.Tanh(),
+            nn.Linear(hidden_sizes[0], hidden_sizes[1]),
+            nn.Tanh(),
+            nn.Linear(hidden_sizes[1], 1),
+            # nn.Sigmoid()
+        )
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        logits = self.net(x)
+
+        if not self.training:
+            # Eval mode → return probabilities
+            return self.sigmoid(logits)
+        else:
+            # Train mode → return logits
+            return logits
+
+
+def create_nn_model(input_dim):
+    model_class = SimpleMLP
+    model = model_class(input_dim=input_dim,
+                        hidden_sizes=(19, 19))
+    return model
+
+
+def train_nn_model(x_train, y_train, x_test, y_test):
+    model = create_nn_model(x_train.shape[1])
+    
+    print('*TRAINING MODEL*\n')
+    
+    # Train the model
+    n_epochs = 100
+    lr = 1e-3
+    weight_decay = 1e-05
+    
+    N_pos = (y_train == 1).sum().item()
+    N_neg = (y_train == 0).sum().item()
+
+    pos_weight = torch.tensor([N_neg / N_pos], dtype=torch.float32)
+    
+    batch_size = 32
+    dataset = TensorDataset(x_train, y_train)
+    train_loader = DataLoader(dataset,
+                              batch_size=batch_size,
+                              shuffle=True)
+    
+    # criterion = nn.BCELoss()
+    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    optimizer = optim.Adam(model.parameters(),
+                           lr=lr,
+                           weight_decay=weight_decay)
+
+    for _ in range(n_epochs):
+        for aux_x, aux_y in train_loader:
+            aux_y = aux_y.float().view(-1, 1)
+            
+            optimizer.zero_grad()
+            
+            scores = model(aux_x)
+            loss = criterion(scores, aux_y)
+            
+            loss.backward()
+            optimizer.step()
+    
+    # Accuracy
+    y_train_nn = (model(x_train).flatten() > 0.5).float()
+    y_test_nn = (model(x_test).flatten() > 0.5).float()
+    
+    train_acc = accuracy_score(y_train, y_train_nn)
+    test_acc = accuracy_score(y_test, y_test_nn)
+    print(f'Accuracy: '
+          f'Train: {train_acc:.2f}, Test: {test_acc:.2f}')
+    
+    train_bal_acc = balanced_accuracy_score(y_train, y_train_nn)
+    test_bal_acc = balanced_accuracy_score(y_test, y_test_nn)
+    print(f'Balanced accuracy: '
+          f'Train: {train_bal_acc:.2f}, Test: {test_bal_acc:.2f}')
+    
+    print('\n*Correct predicitons*')
+    print('Train:')
+    print_correct_preds(y_train, y_train_nn)
+    print('Test:')
+    print_correct_preds(y_test, y_test_nn)
+    print()
+    
+    return model
+
+
+def save_nn(model, filepath):
+    params = [p.data for p in model.parameters()]
+    torch.save(params, filepath)
+
+
+def load_nn(input_dim, filepath):
+    params = torch.load(filepath, weights_only=True)
+    model = create_nn_model(input_dim)
+    for p, loaded_p in zip(model.parameters(), params):
+        p.data.copy_(loaded_p)
     return model
 
 
@@ -426,28 +515,30 @@ def tensorize(fn_model, embedding, x_train, y_train, x_test, y_test,
     print(y_sketch[:10])
     
     # Sketch accuracy
-    sketch_acc_mps, _, threshold = acc_score(y_sketch, y_sketch_mps[:, 1])
-    sketch_acc_lr, _, threshold_lr = acc_score(y_sketch, y_sketch_lr[:, 1])
+    _, y_sketch_mps = y_sketch_mps.max(dim=1)
+    _, y_sketch_lr = y_sketch_lr.max(dim=1)
+    sketch_acc_mps = accuracy_score(y_sketch, y_sketch_mps)
+    sketch_acc_lr = accuracy_score(y_sketch, y_sketch_lr)
     print(f'\n*Sketch accuracies*\n'
           f'Accuracy: TT: {sketch_acc_mps:.2f}, LR: {sketch_acc_lr:.2f}')
     
-    sketch_bal_acc_mps, _, _ = bal_acc_score(y_sketch, y_sketch_mps[:, 1], threshold)
-    sketch_bal_acc_lr, _, _ = bal_acc_score(y_sketch, y_sketch_lr[:, 1], threshold_lr)
+    sketch_bal_acc_mps = balanced_accuracy_score(y_sketch, y_sketch_mps)
+    sketch_bal_acc_lr = balanced_accuracy_score(y_sketch, y_sketch_lr)
     print(f'Balanced accuracy: '
           f'TT: {sketch_bal_acc_mps:.2f}, '
           f'LR: {sketch_bal_acc_lr:.2f}')
     
     # Train/test accuracy
-    y_proba_train_mps = y_train_mps.clone()[:, 1]
-    y_proba_test_mps = y_test_mps.clonse()[:, 1]
+    _, y_train_mps = y_train_mps.max(dim=1)
+    _, y_test_mps = y_test_mps.max(dim=1)
     
-    train_acc, y_train_mps, _ = acc_score(y_train, y_proba_train_mps, threshold)
-    test_acc, y_test_mps, _ = acc_score(y_test, y_proba_test_mps, threshold)
+    train_acc = accuracy_score(y_train, y_train_mps)
+    test_acc = accuracy_score(y_test, y_test_mps)
     print(f'\n*Train/test TT accuracies*\n'
           f'Accuracy: Train: {train_acc:.2f}, Test: {test_acc:.2f}')
     
-    train_bal_acc, _, _ = bal_acc_score(y_train, y_proba_train_mps, threshold)
-    test_bal_acc, _, _ = bal_acc_score(y_test, y_proba_test_mps, threshold)
+    train_bal_acc = balanced_accuracy_score(y_train, y_train_mps)
+    test_bal_acc = balanced_accuracy_score(y_test, y_test_mps)
     print(f'Balanced accuracy: '
           f'Train: {train_bal_acc:.2f}, Test: {test_bal_acc:.2f}')
     
@@ -534,17 +625,17 @@ def renormalize(mps, phys_dim, discr_steps, n_classes, num_features,
     
     # Accuracy
     y_train_mps = mps(embedding(x_train))
+    _, y_train_mps = y_train_mps.max(dim=1)
+    
     y_test_mps = mps(embedding(x_test))
+    _, y_test_mps = y_test_mps.max(dim=1)
     
-    y_proba_train_mps = y_train_mps.clone()[:, 1]
-    y_proba_test_mps = y_test_mps.clonse()[:, 1]
-    
-    train_acc, y_train_mps, threshold = acc_score(y_train, y_proba_train_mps)
-    test_acc, y_test_mps, _ = acc_score(y_test, y_proba_test_mps, threshold)
+    train_acc = accuracy_score(y_train, y_train_mps)
+    test_acc = accuracy_score(y_test, y_test_mps)
     print(f'Model accuracy: Train: {train_acc:.2f}, Test: {test_acc:.2f}')
     
-    train_bal_acc, _, _ = bal_acc_score(y_train, y_proba_train_mps, threshold)
-    test_bal_acc, _, _ = bal_acc_score(y_test, y_proba_test_mps, threshold)
+    train_bal_acc = balanced_accuracy_score(y_train, y_train_mps)
+    test_bal_acc = balanced_accuracy_score(y_test, y_test_mps)
     print(f'Model balanced accuracy: '
           f'Train: {train_bal_acc:.2f}, Test: {test_bal_acc:.2f}')
     
@@ -700,12 +791,13 @@ def get_cancertype_mps(mps, phys_dim, cancer_idx, x_train, y_train, scalers_dict
     x_train = x_train[mask, :5]
     y_train = y_train[mask]
     
-    y_proba = new_mps(embedding(x_train))
+    y_pred = new_mps(embedding(x_train))
+    _, y_pred = y_pred.max(dim=1)
     
-    train_acc, y_pred, threshold = acc_score(y_train, y_proba[:, 1])
+    train_acc = accuracy_score(y_train, y_pred)
     print(f'Model accuracy: Train: {train_acc:.2f}')
     
-    train_bal_acc, _, _ = bal_acc_score(y_train, y_proba[:, 1], threshold)
+    train_bal_acc = balanced_accuracy_score(y_train, y_pred)
     print(f'Model balanced accuracy: '
           f'Train: {train_bal_acc:.2f}')
     

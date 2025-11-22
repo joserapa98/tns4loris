@@ -61,7 +61,7 @@ def train_model(n_splits, n_repeats, all_data, featuresNA, phenoNA, datasets_ids
             results_dir = os.path.join(comb_dir, f'{i}_results.pkl')
             
             if os.path.exists(params_dir):
-                # Check if resc_params, bal_accs, auc_scores and results dirs exist
+                # Check if bal_accs, auc_scores and results dirs exist
                 if not os.path.exists(bal_accs_dir):
                     raise ValueError(f'`bal_accs` dir doesn\'t exist for '
                                      f'{comb, i}')
