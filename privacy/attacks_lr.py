@@ -619,11 +619,6 @@ def bb_attack_tt(scores, labels, model_name, scaler_type, model_type, attack_nam
 def wb_attack(params, labels, model_name, scaler_type, model_type):
     X, y = params, labels
     
-    # Avoid NaNs and infs in lr_tt params
-    mask = ~X.isnan().any(dim=1)
-    mask = mask * ~X.isinf().any(dim=1)
-    X, y = X[mask], y[mask]
-    
     attack_model_dir = os.path.join(cwd, 'privacy', 'results', 'attacks', 'wb',
                                     model_name, scaler_type, model_type)
     os.makedirs(attack_model_dir, exist_ok=True)
@@ -727,6 +722,11 @@ def wb_attack_tt(params, labels, model_name, scaler_type, model_type):
     for bins_id, n_bins in enumerate(n_bins_list):
         print(n_bins)
         X, y = params[bins_id], labels[bins_id]
+        
+        # Avoid NaNs and infs in lr_tt params
+        mask = ~X.isnan().any(dim=1)
+        mask = mask * ~X.isinf().any(dim=1)
+        X, y = X[mask], y[mask]
         
         attack_model_dir = os.path.join(cwd, 'privacy', 'results', 'attacks',
                                         'wb', model_name, scaler_type, model_type)
@@ -931,6 +931,6 @@ if __name__ == '__main__':
                          model_type=model_type)
             wb_attack_tt(params=data['lr_params'],
                          labels=data['labels'],
-                         model_name='lr_' + model_name,
+                         model_name='lr_tt',
                          scaler_type=scaler_type,
                          model_type=model_type)
