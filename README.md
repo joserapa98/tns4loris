@@ -1,4 +1,6 @@
-# Private and Interpretable Clinical Prediction with Quantum-Inspired Tensor Train Models
+# [Private and interpretable clinical prediction with quantum-inspired tensor train models](https://arxiv.org/abs/2602.06110)
+
+**José Ramón Pareja Monturiol, Juliette Sinnott, Roger G. Melko, Mohammad Kohandel**
 
 This repository contains the code used to run the experiments in the paper,
 including training LR models, tensorizing such models, and training DP LR models.
@@ -42,3 +44,23 @@ including training LR models, tensorizing such models, and training DP LR models
 - **Interpretability experiments**  
   Conducted in the `interpretability.ipynb` notebook, located in the
   `interpretability/` folder.  
+
+
+## Citing
+
+If you would like to cite this work, please use the following format:
+
+- J. R. Pareja Monturiol, J. Sinnott, R. G. Melko, M. Kohandel, *Private and 
+interpretable clinical prediction with quantum-inspired tensor train models*, arXiv:2602.06110 (2026).
+
+```
+@misc{pareja2026private,
+  title={Private and interpretable clinical prediction with quantum-inspired tensor train models}, 
+  author={Pareja Monturiol, José Ramón and Sinnott, Juliette and Melko, Roger G. and Kohandel, Mohammad},
+  year={2026},
+  eprint={2602.06110},
+  archivePrefix={arXiv},
+  primaryClass={cs.LG},
+  url={https://arxiv.org/abs/2602.06110}, 
+}
+```
