@@ -1,5 +1,5 @@
 [![Code](https://img.shields.io/badge/Code-10.5281/zenodo.22126153-green)](https://doi.org/10.5281/zenodo.22126153)
-[![TMLR](https://img.shields.io/badge/TMLR-QtG3fC1v5t-blue)](https://openreview.net/forum?id=QtG3fC1v5t)
+[![TMLR](https://img.shields.io/badge/Journal-TMLR%20%7C%20OpenReview%3A%20QtG3fC1v5t-blue)](https://openreview.net/forum?id=QtG3fC1v5t)
 [![arXiv](https://img.shields.io/badge/arXiv-2602.06110-red)](https://arxiv.org/abs/2602.06110)
 
 # [Private and interpretable clinical prediction with quantum-inspired tensor train models](https://openreview.net/forum?id=QtG3fC1v5t)
